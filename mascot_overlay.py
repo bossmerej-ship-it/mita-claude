@@ -44,6 +44,10 @@ LEDGE_HALF = 380      # полуширина уступа (рамки поля �
 USE_LEDGE = False     # True — гуляет ещё и по рамке поля ввода и крыше окна; False — только по низу окна
 LEG = 14 * SCALE      # насколько свешиваются ножки, когда сидит на уступе
 
+# Сцена после сильного падения: (кадр, сколько тиков держать). "dazed" — лежит со звёздочками.
+CRASH = [("crash_impact", 7), ("crash_tears", 10), ("dazed", 75), ("dazed3", 22), ("situp", 18),
+         ("knees", 18), ("kneel", 12), ("dustoff", 28), ("recover", 20), ("shy", 24)]
+
 # Уступ по умолчанию: dx — от центра окна, dy — от низа окна вверх. Для каждого окна свой.
 DEFAULT_LEDGE = {"dx": 0, "dy": 128}
 DEFAULT = {"ledges": {}, "sit": False, "sitpos": {}}
@@ -136,6 +140,10 @@ class Mascot:
         self.root.attributes("-transparentcolor", KEY)
 
         self.img = {}
+        try:
+            self.drops = json.loads((SPRITES / "drops.json").read_text(encoding="utf-8"))
+        except Exception:
+            self.drops = {}
         for f in SPRITES.glob("*.png"):
             im = tk.PhotoImage(file=str(f))
             self.img[f.stem] = im.zoom(SCALE, SCALE) if SCALE > 1 else im
@@ -267,9 +275,12 @@ class Mascot:
     def land(self, name, speed):
         self.on = name
         self.Y = self.platforms()[name][0]
+        if abs(self.vx) > 0.5:
+            self.dir = 1 if self.vx > 0 else -1
         self.vx = self.vy = 0
         if speed > HARD_LANDING:
-            self.mode, self.timer = "lying", 70      # шлёпнулась
+            self.mode, self.crash_i = "crash", 0     # шлёпнулась: дальше вся сцена CRASH
+            self.timer = CRASH[0][1]
         else:
             self.mode, self.timer = "land", 7        # присела от приземления
 
@@ -379,8 +390,12 @@ class Mascot:
         if self.timer <= 0:
             if self.mode == "turn":
                 self.mode, self.timer = "walk", random.randint(60, 200)
-            elif self.mode == "lying":
-                self.mode, self.timer = "getup", 18
+            elif self.mode == "crash":
+                self.crash_i += 1
+                if self.crash_i < len(CRASH):
+                    self.timer = CRASH[self.crash_i][1]
+                else:
+                    self.mode, self.timer = "idle", 40
             else:
                 self.next_action()
 
@@ -391,20 +406,26 @@ class Mascot:
         m = self.mode
         if m == "held":
             moving = len(self.trail) >= 2 and abs(self.trail[-1][0] - self.trail[0][0]) > 3
-            return ("front_step0" if (f // 3) % 2 else "front_step1") if moving else "held", 0
+            if moving:                                   # мотают — паникует
+                return "fall_panic" + ("_left" if (f // 4) % 2 else ""), 0
+            return "held", 0
         if m == "sit":
             if self.on == "ledge":                       # сидит на краю, болтает ножками
                 return ("sit0" if (f // 20) % 2 else "sit1"), LEG
             return "front", 0
         if m == "fall":
-            side = "_left" if self.vx < -0.5 else ("" if self.vx > 0.5 else left)
-            return ("front34_step0" if (f // 3) % 2 else "front34_step1") + side, 0
+            if abs(self.vx) > 3:                         # летит вбок — «рыбкой»
+                return "fall_dive" + ("_left" if self.vx < 0 else ""), 0
+            if self.vy > 4:                              # падает — машет руками
+                return "fall_panic" + ("_left" if (f // 5) % 2 else ""), 0
+            return "front34" + left, 0
         if m == "land":
             return "squash", 0
-        if m == "lying":
-            return "lying" + left, 0
-        if m == "getup":
-            return ("squash" if self.timer > 9 else "front34" + left), 0
+        if m == "crash":
+            name = CRASH[self.crash_i][0]
+            if name == "dazed":                          # звёздочки кружатся, иногда дёргается
+                name = "dazed1" if (f // 7) % 3 else "dazed2"
+            return name + left, self.drops.get(name, 0)
         if m in ("climb_up", "climb_down"):
             return ("back_step0" if (f // 8) % 2 else "back_step1"), 0
         if m == "walk":
@@ -443,7 +464,8 @@ class Mascot:
         self.step()
         name, drop = self.pick()
         self.canvas.itemconfig(self.sprite, image=self.img.get(name, self.img["front"]))
-        self.canvas.coords(self.sprite, self.cw // 2, self.base + drop)
+        shake = (1 if self.frame % 2 else -1) if self.mode == "crash" and self.crash_i == 0 else 0
+        self.canvas.coords(self.sprite, self.cw // 2 + shake, self.base + drop)
         bob = 1 if self.mode == "idle" and (self.frame // 25) % 2 else 0
 
         fg = user32.GetForegroundWindow()
