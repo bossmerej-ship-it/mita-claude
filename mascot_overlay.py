@@ -41,6 +41,7 @@ GRAVITY = 0.7         # ускорение падения
 MAX_FALL = 26         # предельная скорость падения
 HARD_LANDING = 13     # быстрее этого — падает плашмя и потом встаёт
 LEDGE_HALF = 380      # полуширина уступа (рамки поля ввода)
+USE_LEDGE = False     # True — гуляет ещё и по рамке поля ввода и крыше окна; False — только по низу окна
 LEG = 14 * SCALE      # насколько свешиваются ножки, когда сидит на уступе
 
 # Уступ по умолчанию: dx — от центра окна, dy — от низа окна вверх. Для каждого окна свой.
@@ -180,6 +181,8 @@ class Mascot:
         ledge = self.st["ledges"].get(self.target[1], DEFAULT_LEDGE)
         cx = w / 2 + ledge["dx"]
         floor_y = min(b, wb) - b
+        if not USE_LEDGE:
+            return {"floor": (floor_y, 0, w)}
         return {
             "floor": (floor_y, 0, w),
             "ledge": (-ledge["dy"], max(0, cx - LEDGE_HALF), min(w, cx + LEDGE_HALF)),
@@ -211,7 +214,7 @@ class Mascot:
         if not self.held:
             return
         self.held = False
-        if e.state & 0x0004:                         # Ctrl: здесь рамка поля ввода
+        if USE_LEDGE and e.state & 0x0004:           # Ctrl: здесь рамка поля ввода
             w = self.world[2] - self.world[0]
             self.st["ledges"][self.target[1]] = {"dx": round(self.X - w / 2), "dy": round(-self.Y)}
             self.land("ledge", 0)
@@ -364,7 +367,7 @@ class Mascot:
                 self.at_edge(self.on, x1, x2)
                 return
             # на полу у края уступа: может залезть наверх
-            if self.on == "floor" and self.edge_cooldown == 0:
+            if self.on == "floor" and self.edge_cooldown == 0 and "ledge" in plats:
                 lp, lx1, lx2 = plats["ledge"]
                 for edge in (lx1, lx2):
                     if abs(self.X - edge) < SPEED and py - lp > 20 and random.random() < 0.5:
@@ -390,7 +393,7 @@ class Mascot:
             moving = len(self.trail) >= 2 and abs(self.trail[-1][0] - self.trail[0][0]) > 3
             return ("front_step0" if (f // 3) % 2 else "front_step1") if moving else "held", 0
         if m == "sit":
-            if self.on:                                  # сидит на краю, болтает ножками
+            if self.on == "ledge":                       # сидит на краю, болтает ножками
                 return ("sit0" if (f // 20) % 2 else "sit1"), LEG
             return "front", 0
         if m == "fall":
@@ -432,7 +435,8 @@ class Mascot:
                 self.X, self.Y = spot
                 self.mode, self.on = "sit", self.platform_under_feet()
             else:
-                py, x1, x2 = self.platforms()["ledge"]
+                plats = self.platforms()
+                py, x1, x2 = plats.get("ledge", plats["floor"])
                 self.X, self.Y = (x1 + x2) / 2, py - 120
                 self.mode = "fall"
 
