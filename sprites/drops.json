@@ -1,15 +1,15 @@
 {
+ "crash_tears": 1,
+ "dazed2": 1,
+ "situp": 0,
+ "kneel": 0,
+ "shy": -1,
  "fall_panic": 0,
  "fall_dive": 0,
- "crash_impact": 7,
- "crash_tears": 1,
+ "crash_impact": 4,
  "dazed1": 1,
- "dazed2": 1,
  "dazed3": -1,
- "situp": 0,
  "knees": 0,
- "kneel": 0,
  "dustoff": -1,
- "recover": -1,
- "shy": 0
+ "recover": -1
 }
