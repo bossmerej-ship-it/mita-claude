@@ -3,13 +3,14 @@
 Нужен бесплатный pyobjc:  pip3 install pyobjc-framework-Quartz pyobjc-framework-Cocoa
 Имя программы-владельца окна macOS отдаёт без разрешения на запись экрана,
 поэтому ищем окно по программе (Claude, ChatGPT, Codex), а не по заголовку.
+Активное окно = самое переднее обычное окно в списке окон (так надёжнее, чем NSWorkspace).
 Координаты Quartz и Tk на маке одинаковые: точки, начало в левом верхнем углу главного экрана.
 """
 
 import os
 
 import Quartz
-from AppKit import NSApplication, NSRunningApplication, NSScreen, NSWorkspace
+from AppKit import NSApplication, NSRunningApplication, NSScreen
 
 BG = "systemTransparent"
 # На маке правая кнопка у Tk — это Button-2 (а у некоторых мышей Button-3), плюс Ctrl+клик.
@@ -35,29 +36,54 @@ def _windows():
     return Quartz.CGWindowListCopyWindowInfo(opts, Quartz.kCGNullWindowID) or []
 
 
-def _main_window_of(pid):
-    """Самое верхнее обычное окно программы (окна идут от переднего к заднему)."""
+def _normal(w):
+    """Обычное окно программы (не меню, не Dock), достаточно большое, и не наше."""
+    if w.get(Quartz.kCGWindowLayer, 1) != 0 or w.get(Quartz.kCGWindowOwnerPID) == _OWN_PID:
+        return None
+    b = w.get(Quartz.kCGWindowBounds) or {}
+    if b.get("Width", 0) < 200 or b.get("Height", 0) < 200:
+        return None
+    return {
+        "pid": int(w.get(Quartz.kCGWindowOwnerPID)),
+        "owner": str(w.get(Quartz.kCGWindowOwnerName) or ""),
+        "bounds": (int(b["X"]), int(b["Y"]), int(b["X"] + b["Width"]), int(b["Y"] + b["Height"])),
+    }
+
+
+def _front():
+    """Самое переднее обычное окно: список окон macOS идёт от переднего к заднему."""
     for w in _windows():
-        if w.get("kCGWindowOwnerPID") != pid or w.get("kCGWindowLayer", 1) != 0:
-            continue
-        b = w.get("kCGWindowBounds") or {}
-        if b.get("Width", 0) > 200 and b.get("Height", 0) > 200:
-            return {
-                "pid": pid,
-                "bounds": (int(b["X"]), int(b["Y"]), int(b["X"] + b["Width"]), int(b["Y"] + b["Height"])),
-            }
+        win = _normal(w)
+        if win:
+            return win
     return None
 
 
+def _main_window_of(pid):
+    for w in _windows():
+        win = _normal(w)
+        if win and win["pid"] == pid:
+            return win
+    return None
+
+
+def describe():
+    """Для лога: какие программы с окнами сейчас на экране."""
+    names = []
+    for w in _windows():
+        win = _normal(w)
+        if win and win["owner"] not in names:
+            names.append(win["owner"])
+    return ", ".join(names)
+
+
 def find_target(last, match):
-    """Окно активной программы из списка; если активна другая — последнее, где она была."""
-    app = NSWorkspace.sharedWorkspace().frontmostApplication()
-    if app is not None:
-        name = match(str(app.localizedName() or ""))
+    """Окно активной программы из списка; если впереди другая — последнее, где она была."""
+    front = _front()
+    if front:
+        name = match(front["owner"])
         if name:
-            win = _main_window_of(app.processIdentifier())
-            if win:
-                return win, name
+            return front, name
     if last and last[0]:
         win = _main_window_of(last[0]["pid"])
         if win:
@@ -89,9 +115,8 @@ def work_bottom(win):
 
 
 def is_foreground(win, own):
-    app = NSWorkspace.sharedWorkspace().frontmostApplication()
-    pid = app.processIdentifier() if app is not None else None
-    return pid in (win["pid"], own)
+    front = _front()
+    return front is not None and front["pid"] == win["pid"]
 
 
 def refocus(win):

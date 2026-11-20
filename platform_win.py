@@ -58,6 +58,11 @@ def find_target(last, match):
     return None, None
 
 
+def describe():
+    """Для лога: заголовок активного окна."""
+    return _title(user32.GetForegroundWindow())
+
+
 def is_minimized(win):
     return bool(user32.IsIconic(win))
 

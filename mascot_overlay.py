@@ -23,6 +23,7 @@ Claude Desktop не меняется, поэтому всё переживает
 import json
 import random
 import sys
+import traceback
 import tkinter as tk
 from pathlib import Path
 
@@ -34,6 +35,16 @@ else:
 HERE = Path(__file__).resolve().parent
 SPRITES = HERE / "sprites"
 POS_FILE = HERE / "mascot_pos.json"
+LOG_FILE = HERE / "mita.log"
+
+
+def log(text):
+    """Ошибки пишем в mita.log рядом со скриптом, чтобы было что прислать."""
+    try:
+        with open(LOG_FILE, "a", encoding="utf-8") as f:
+            f.write(text.rstrip() + chr(10))
+    except Exception:
+        pass
 
 SCALE = 1             # только целое число: 1 = 41x86, 2 = 82x172. Дробь размоет пиксели.
 # Окна, по которым она гуляет. Она живёт в том из них, что сейчас активно.
@@ -384,10 +395,20 @@ class Mascot:
         return "front", 0
 
     def tick(self):
+        try:
+            self._tick()
+        except Exception:
+            log(traceback.format_exc())
+            self.root.after(500, self.tick)
+
+    def _tick(self):
         self.frame += 1
         claude, name = plat.find_target(self.target if self.target[0] else None, target_name)
         if name != self.target[1] and claude is not None:
             self.target = (claude, name)            # перебралась в другое окно
+            log(f"окно: {name} {plat.window_rect(claude)}")
+        if self.frame == 150 and self.target[1] is None:
+            log(f"за 5 секунд не нашла окно из {TARGETS}. Сейчас на экране: {plat.describe()}")
             self.placed, self.held = False, False
         if claude is None or plat.is_minimized(claude):
             self.root.withdraw()
@@ -427,7 +448,11 @@ class Mascot:
 
 
 if __name__ == "__main__":
+    log(f"--- старт: {sys.platform}, Python {sys.version.split()[0]}, Tk {tk.TkVersion}")
     try:
         Mascot().root.mainloop()
     except KeyboardInterrupt:
         pass
+    except Exception:
+        log(traceback.format_exc())
+        raise
