@@ -47,6 +47,15 @@ def setup_window(root):
     return hwnd
 
 
+def show(root):
+    root.deiconify()
+    root.attributes("-topmost", True)
+
+
+def hide(root):
+    root.withdraw()
+
+
 def find_target(last, match):
     """Активное окно из списка; если активно другое — последнее, где она была. -> (окно, имя)"""
     fg = user32.GetForegroundWindow()

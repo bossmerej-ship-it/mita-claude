@@ -20,15 +20,46 @@ _OWN_PID = os.getpid()
 _ACTIVATE_IGNORING_OTHERS = 1 << 1
 
 
+_ns = []      # NSWindow нашего окна Tk
+
+
 def setup_window(root):
-    """Прозрачный фон и без значка в Dock. Возвращает свой pid как «своё окно»."""
+    """Прозрачный фон, без значка в Dock, окно на всех рабочих столах и поверх полноэкранных окон."""
     root.config(bg=BG)
     root.attributes("-transparent", True)
+    app = NSApplication.sharedApplication()
     try:
-        NSApplication.sharedApplication().setActivationPolicy_(1)   # Accessory: без Dock и меню
+        app.setActivationPolicy_(1)        # Accessory: без Dock и меню, не мешает другим программам
     except Exception:
         pass
+    root.update_idletasks()
+    root.update()
+    for w in app.windows():
+        try:
+            w.setLevel_(25)                                  # над обычными окнами
+            w.setCollectionBehavior_((1 << 0) | (1 << 4) | (1 << 8))   # все столы, неподвижно, рядом с фуллскрином
+            w.setHidesOnDeactivate_(False)
+            _ns.append(w)
+        except Exception:
+            pass
     return _OWN_PID
+
+
+def show(root):
+    """Показать, НЕ делая Python активным (иначе macOS уводит ChatGPT/Claude назад или с их рабочего стола)."""
+    if _ns:
+        for w in _ns:
+            w.orderFrontRegardless()
+    else:
+        root.deiconify()
+
+
+def hide(root):
+    if _ns:
+        for w in _ns:
+            w.orderOut_(None)
+    else:
+        root.withdraw()
 
 
 def _windows():

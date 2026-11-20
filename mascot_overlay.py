@@ -136,6 +136,7 @@ class Mascot:
         self.world = None
         self.placed = False
         self.target = (None, None)   # (окно, "Claude"/"Codex")
+        self.shown = None            # видна ли сейчас (меняем только при изменении)
         self.root.after(TICK_MS, self.tick)
 
     # ---------- мир ----------
@@ -394,6 +395,14 @@ class Mascot:
             return ("back34" + left) if self.timer > 8 else ("front34" + left), 0
         return "front", 0
 
+    def set_shown(self, on):
+        # Windows: поверх всех заново каждый кадр; мак: только когда меняется (иначе крадёт фокус)
+        if on and (sys.platform != "darwin" or self.shown is not True):
+            plat.show(self.root)
+        elif not on and self.shown is not False:
+            plat.hide(self.root)
+        self.shown = on
+
     def tick(self):
         try:
             self._tick()
@@ -411,7 +420,7 @@ class Mascot:
             log(f"за 5 секунд не нашла окно из {TARGETS}. Сейчас на экране: {plat.describe()}")
             self.placed, self.held = False, False
         if claude is None or plat.is_minimized(claude):
-            self.root.withdraw()
+            self.set_shown(False)
             self.root.after(TICK_MS, self.tick)
             return
         l, t, r, b = plat.window_rect(claude)
@@ -440,10 +449,9 @@ class Mascot:
             wx = l + round(self.X) - self.cw // 2
             wy = b + round(self.Y) - self.base - bob
             self.root.geometry(f"+{wx}+{wy}")
-            self.root.deiconify()
-            self.root.attributes("-topmost", True)
+            self.set_shown(True)
         else:
-            self.root.withdraw()
+            self.set_shown(False)
         self.root.after(TICK_MS, self.tick)
 
 
