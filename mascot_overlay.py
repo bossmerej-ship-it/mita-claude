@@ -1,4 +1,4 @@
-"""Пиксельный маскот поверх Claude Desktop и приложения Codex, с физикой.
+"""Пиксельный маскот поверх Claude Desktop и ChatGPT/Codex, с физикой. Windows и macOS.
 
 Прозрачное окно поверх всех окон. Клики по пустому месту проходят насквозь,
 а саму девочку можно трогать мышкой:
@@ -16,15 +16,20 @@
 Всё считается относительно окна Claude, так что двигается вместе с ним.
 Claude Desktop не меняется, поэтому всё переживает обновления.
 
-Запуск:  python mascot_overlay.py   (или pythonw, чтобы не было консоли)
+Запуск:  Windows — python mascot_overlay.py (или pythonw, чтобы не было консоли)
+         macOS   — python3 mascot_overlay.py (нужен pip3 install pyobjc-framework-Quartz pyobjc-framework-Cocoa)
 """
 
-import ctypes
-import ctypes.wintypes as wt
 import json
 import random
+import sys
 import tkinter as tk
 from pathlib import Path
+
+if sys.platform == "darwin":
+    import platform_mac as plat       # macOS: Quartz + pyobjc
+else:
+    import platform_win as plat       # Windows: WinAPI
 
 HERE = Path(__file__).resolve().parent
 SPRITES = HERE / "sprites"
@@ -33,7 +38,6 @@ POS_FILE = HERE / "mascot_pos.json"
 SCALE = 1             # только целое число: 1 = 41x86, 2 = 82x172. Дробь размоет пиксели.
 # Окна, по которым она гуляет. Она живёт в том из них, что сейчас активно.
 TARGETS = ("Claude", "Codex", "ChatGPT")
-KEY = "#ff00fe"       # этот цвет становится прозрачным (в спрайтах его нет)
 TICK_MS = 33          # ~30 кадров в секунду
 SPEED = 1.2           # ходьба, пикселей за кадр
 CLIMB = 1.0           # лазанье, пикселей за кадр
@@ -52,65 +56,11 @@ CRASH = [("crash_impact", 7), ("crash_tears", 10), ("dazed", 75), ("dazed3", 22)
 DEFAULT_LEDGE = {"dx": 0, "dy": 128}
 DEFAULT = {"ledges": {}, "sit": False, "sitpos": {}}
 
-user32 = ctypes.windll.user32
-try:
-    ctypes.windll.shcore.SetProcessDpiAwareness(2)  # координаты совпадают с экраном
-except Exception:
-    user32.SetProcessDPIAware()
-
-GWL_EXSTYLE = -20
-WS_EX_LAYERED = 0x00080000
-WS_EX_TOOLWINDOW = 0x00000080
-WS_EX_NOACTIVATE = 0x08000000
-
-user32.GetWindowLongW.restype = ctypes.c_long
-user32.SetWindowLongW.restype = ctypes.c_long
-user32.GetParent.restype = wt.HWND
-user32.GetForegroundWindow.restype = wt.HWND
-user32.MonitorFromWindow.restype = wt.HANDLE
-EnumProc = ctypes.WINFUNCTYPE(wt.BOOL, wt.HWND, wt.LPARAM)
-
-
-class MONITORINFO(ctypes.Structure):
-    _fields_ = [("cbSize", wt.DWORD), ("rcMonitor", wt.RECT), ("rcWork", wt.RECT), ("dwFlags", wt.DWORD)]
-
-
-def title_of(hwnd):
-    n = user32.GetWindowTextLengthW(hwnd)
-    buf = ctypes.create_unicode_buffer(n + 1)
-    user32.GetWindowTextW(hwnd, buf, n + 1)
-    return buf.value
-
-
 def target_name(title):
     for t in TARGETS:
         if title == t or title.startswith(t + " "):
             return t
     return None
-
-
-def find_target(last):
-    """Активное окно Claude или Codex; если активно другое — последнее, где она была."""
-    fg = user32.GetForegroundWindow()
-    name = target_name(title_of(fg)) if fg else None
-    if name:
-        return fg, name
-    if last and user32.IsWindow(last[0]) and user32.IsWindowVisible(last[0]):
-        return last
-    return None, None
-
-
-def window_rect(hwnd):
-    r = wt.RECT()
-    user32.GetWindowRect(hwnd, ctypes.byref(r))
-    return r.left, r.top, r.right, r.bottom
-
-
-def work_bottom(hwnd):
-    mi = MONITORINFO()
-    mi.cbSize = ctypes.sizeof(MONITORINFO)
-    user32.GetMonitorInfoW(user32.MonitorFromWindow(hwnd, 2), ctypes.byref(mi))
-    return mi.rcWork.bottom
 
 
 def load_state():
@@ -136,8 +86,6 @@ class Mascot:
         self.root = tk.Tk()
         self.root.overrideredirect(True)
         self.root.attributes("-topmost", True)
-        self.root.config(bg=KEY)
-        self.root.attributes("-transparentcolor", KEY)
 
         self.img = {}
         try:
@@ -150,21 +98,18 @@ class Mascot:
         self.cw = max(i.width() for i in self.img.values()) + 2
         self.base = max(i.height() for i in self.img.values()) + 6   # линия ног на холсте
         self.ch = self.base + LEG + 2
-        self.canvas = tk.Canvas(self.root, width=self.cw, height=self.ch, bg=KEY,
+        self.canvas = tk.Canvas(self.root, width=self.cw, height=self.ch, bg=plat.BG,
                                 highlightthickness=0, bd=0)
         self.canvas.pack()
         self.sprite = self.canvas.create_image(self.cw // 2, self.base, anchor="s", image=self.img["front"])
         self.root.geometry(f"{self.cw}x{self.ch}+0+0")
-        self.root.update_idletasks()
-
-        self.hwnd = user32.GetParent(self.root.winfo_id()) or self.root.winfo_id()
-        ex = user32.GetWindowLongW(self.hwnd, GWL_EXSTYLE) | WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE
-        user32.SetWindowLongW(self.hwnd, GWL_EXSTYLE, ex)
+        self.own = plat.setup_window(self.root)   # прозрачность, без панели задач/Dock, без фокуса
 
         self.canvas.bind("<ButtonPress-1>", self.on_press)
         self.canvas.bind("<B1-Motion>", self.on_drag)
         self.canvas.bind("<ButtonRelease-1>", self.on_release)
-        self.canvas.bind("<Button-3>", self.on_right)
+        for button in plat.RIGHT_BUTTONS:
+            self.canvas.bind(button, self.on_right)
 
         # Положение ног в координатах окна Claude: X от левого края, Y от нижнего (вверх — минус).
         self.X, self.Y = 300.0, -200.0
@@ -222,6 +167,7 @@ class Mascot:
         if not self.held:
             return
         self.held = False
+        plat.refocus(self.target[0])                 # фокус остаётся у Claude/ChatGPT
         if USE_LEDGE and e.state & 0x0004:           # Ctrl: здесь рамка поля ввода
             w = self.world[2] - self.world[0]
             self.st["ledges"][self.target[1]] = {"dx": round(self.X - w / 2), "dy": round(-self.Y)}
@@ -246,6 +192,7 @@ class Mascot:
         if e.state & 0x0001:                         # Shift + ПКМ = выход
             self.root.destroy()
             return
+        plat.refocus(self.target[0])
         self.st["sit"] = not self.st["sit"]
         if self.st["sit"]:
             self.st["sitpos"][self.target[1]] = [self.X, self.Y]
@@ -438,16 +385,16 @@ class Mascot:
 
     def tick(self):
         self.frame += 1
-        claude, name = find_target(self.target if self.target[0] else None)
+        claude, name = plat.find_target(self.target if self.target[0] else None, target_name)
         if name != self.target[1] and claude is not None:
             self.target = (claude, name)            # перебралась в другое окно
             self.placed, self.held = False, False
-        if claude is None or user32.IsIconic(claude):
+        if claude is None or plat.is_minimized(claude):
             self.root.withdraw()
             self.root.after(TICK_MS, self.tick)
             return
-        l, t, r, b = window_rect(claude)
-        self.world = (l, t, r, b, work_bottom(claude))
+        l, t, r, b = plat.window_rect(claude)
+        self.world = (l, t, r, b, plat.work_bottom(claude))
 
         if not self.placed:                              # первый кадр: на уступ или туда, где сидела
             self.placed = True
@@ -468,8 +415,7 @@ class Mascot:
         self.canvas.coords(self.sprite, self.cw // 2 + shake, self.base + drop)
         bob = 1 if self.mode == "idle" and (self.frame // 25) % 2 else 0
 
-        fg = user32.GetForegroundWindow()
-        if self.held or self.mode == "fall" or fg in (claude, self.hwnd):
+        if self.held or self.mode == "fall" or plat.is_foreground(claude, self.own):
             wx = l + round(self.X) - self.cw // 2
             wy = b + round(self.Y) - self.base - bob
             self.root.geometry(f"+{wx}+{wy}")
