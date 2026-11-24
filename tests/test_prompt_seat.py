@@ -38,6 +38,7 @@ class PromptSeatTests(unittest.TestCase):
         self.m.mode, self.m.on = "held", None
         self.m.held, self.m.placed = True, True
         self.m.frame, self.m.edge_cooldown = 0, 0
+        self.m.walk_pixels, self.m.walk_age = 0, 0.0
         self.m.dir = 1
         self.m.root, self.m.canvas = Mock(), Mock()
         self.m.img, self.m.sprite, self.m.own = {"front": Mock()}, 1, 999

@@ -1,0 +1,60 @@
+import tkinter as tk
+import unittest
+from unittest.mock import patch
+
+import mascot_overlay as overlay
+import walk_motion as walk
+
+
+def walking_mita(direction=1, surface="ledge"):
+    m = overlay.Mascot.__new__(overlay.Mascot)
+    m.world = (0, 0, 1000, 750, 750)
+    m.st, m.target = {"ledges": {}}, (1, "Codex")
+    m.prompt, m.auto_prompt_apps = (100, 620, 900, 725), set()
+    m.mode, m.on, m.dir = "idle", surface, direction
+    m.X, m.Y, m.cw = 500.25, m.platforms()[surface][0], 81
+    m.frame, m.edge_cooldown = 0, 200
+    m.start_walk(1000)
+    return m
+
+
+class WalkMotionTests(unittest.TestCase):
+    def test_same_ground_distance_gives_same_pose_across_speeds_and_frame_rates(self):
+        for direction in (-1, 1):
+            poses = []
+            for speed, steps, surface in ((.6, (.25,), "floor"), (1.2, (1.8, .7, .5), "ledge"),
+                                          (2.4, (1,), "floor")):
+                m = walking_mita(direction, surface)
+                # За первые 4 такта средняя скорость вдвое ниже обычной.
+                remaining = 2 + 36 / speed
+                with patch.object(overlay, "SPEED", speed):
+                    i = 0
+                    while remaining > 1e-8:
+                        dt = min(steps[i % len(steps)], remaining)
+                        m.frame += 7 * dt  # часы других анимаций не задают темп шагов
+                        m.step(dt)
+                        remaining -= dt
+                        i += 1
+                self.assertAlmostEqual(m.X, 500.25 + direction * 36)
+                self.assertEqual(m.Y, m.platforms()[surface][0])
+                poses.append(m.pick())
+            self.assertEqual(len(set(poses)), 1)
+
+    def test_unchanged_screen_position_freezes_footwork_and_continued_walk_keeps_phase(self):
+        m = walking_mita()
+        for _ in range(20):
+            m.step()
+        pose = m.pick()
+        m.start_walk(180)
+        with patch.object(overlay, "SPEED", 0):
+            for _ in range(12):
+                m.frame += 1
+                m.step()
+                self.assertEqual(m.pick(), pose)
+        m.prompt = (650, 615, 950, 720)
+        m.step(0)
+        self.assertGreater(m.X, 650)
+        self.assertEqual(m.pick(), pose)
+
+if __name__ == "__main__":
+    unittest.main()

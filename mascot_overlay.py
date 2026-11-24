@@ -32,6 +32,7 @@ from collections import deque
 from pathlib import Path
 
 import fall_motion as motion
+import walk_motion as walk
 
 if sys.platform == "darwin":
     import platform_mac as plat       # macOS: Quartz + pyobjc
@@ -121,6 +122,8 @@ class Mascot:
             im = tk.PhotoImage(file=str(f))
             self.img[f.stem] = im.zoom(SCALE, SCALE) if SCALE > 1 else im
         self.img.update(motion.load_poses(self.root, SPRITES / "motion" / "fall.png", SCALE))
+        self.img.update(motion.load_poses(self.root, SPRITES / "motion" / "walk.png", SCALE,
+                                          cell=walk.CELL, rows=walk.POSE_ROWS))
         self.cw = max(i.width() for i in self.img.values()) + 2
         self.base = max(i.height() for i in self.img.values()) + 6   # линия ног на холсте
         self.ch = self.base + LEG + 2
@@ -145,6 +148,8 @@ class Mascot:
         self.mode = "fall"
         self.timer = 0
         self.frame = 0
+        self.walk_pixels = 0
+        self.walk_age = 0.0
         self.edge_cooldown = 0
         self.held = False
         self.trail = deque()      # время и координаты последних движений мыши
@@ -335,7 +340,7 @@ class Mascot:
             return
         r = random.random()
         if r < 0.6:
-            self.mode, self.timer = "walk", random.randint(60, 220)
+            self.start_walk(random.randint(60, 220))
             if random.random() < 0.3:
                 self.start_turn()
         elif r < 0.85:
@@ -343,17 +348,22 @@ class Mascot:
         else:
             self.mode, self.timer = "look", random.randint(30, 60)
 
+    def start_walk(self, duration):
+        if self.mode != "walk":
+            self.walk_pixels = 0
+            self.walk_age = 0.0
+        self.mode, self.timer = "walk", duration
+
     def start_turn(self):
         self.dir *= -1
-        self.mode, self.timer = "turn", 12
+        self.mode, self.timer = "turn", walk.TURN_TICKS
 
-    def at_edge(self, name, x1, x2):
+    def at_edge(self, name):
         """Дошла до края уступа: развернуться, слезть или спрыгнуть."""
         plats = self.platforms()
         floor_y = plats["floor"][0]
         r = random.random()
         if name == "floor" or self.edge_cooldown > 0:
-            self.X = min(max(self.X, x1 + 1), x2 - 1)
             self.start_turn()
         elif name == "ledge" and r < 0.3 and floor_y - plats["ledge"][0] > 20:
             self.mode = "climb_down"
@@ -361,7 +371,6 @@ class Mascot:
         elif r < 0.45:
             self.start_fall(self.dir * 2.5, -5)        # спрыгнула
         else:
-            self.X = min(max(self.X, x1 + 1), x2 - 1)
             self.start_turn()
         self.edge_cooldown = 90
 
@@ -432,15 +441,23 @@ class Mascot:
 
         self.timer -= dt
         if self.mode == "walk":
-            self.X += SPEED * self.dir * dt
-            if self.X <= x1 or self.X >= x2:
-                self.at_edge(self.on, x1, x2)
+            distance = walk.travel(self.walk_age, dt, SPEED)
+            self.walk_age += dt
+            # Считаем путь по тем же целым координатам, по которым перемещается окно Tk.
+            previous_x = round(self.X)
+            inset = min(1, (x2 - x1) / 2)
+            limit = x2 - inset if self.dir > 0 else x1 + inset
+            x = self.X + self.dir * distance
+            self.X = min(x, limit) if self.dir > 0 else max(x, limit)
+            self.walk_pixels += max(0, (round(self.X) - previous_x) * self.dir)
+            if self.X == limit:
+                self.at_edge(self.on)
                 return
             # на полу у края уступа: может залезть наверх
             if self.on == "floor" and self.edge_cooldown == 0 and "ledge" in plats:
                 lp, lx1, lx2 = plats["ledge"]
                 for edge in (lx1, lx2):
-                    if abs(self.X - edge) < SPEED * dt and py - lp > 20 and random.random() < 0.5:
+                    if abs(self.X - edge) < distance and py - lp > 20 and random.random() < 0.5:
                         self.X = edge
                         self.mode, self.on = "climb_up", None
                         self.dir = 1 if edge == lx1 else -1
@@ -448,7 +465,7 @@ class Mascot:
                         return
         if self.timer <= 0:
             if self.mode in ("turn", "perch"):
-                self.mode, self.timer = "walk", random.randint(60, 200)
+                self.start_walk(random.randint(60, 200))
             elif self.mode == "land" and self.on == "ledge":
                 self.mode, self.timer = "perch", 60
             elif self.mode == "crash":
@@ -486,7 +503,7 @@ class Mascot:
         if m in ("climb_up", "climb_down"):
             return ("back_step0" if (f // 8) % 2 else "back_step1"), 0
         if m == "walk":
-            return {0: "side_step0", 1: "side", 2: "side_step1", 3: "side"}[(f // 6) % 4] + left, 0
+            return walk.sprite(self.walk_pixels, SCALE, self.dir), 0
         if m == "turn":
             return ("front34" + left) if self.timer > 6 else "front", 0
         if m == "look":
