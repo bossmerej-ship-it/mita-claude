@@ -82,5 +82,17 @@ class WalkMotionTests(unittest.TestCase):
             m.step()
             self.assertGreater((m.X - x) * -incoming, 0)
 
+    def test_ledge_too_narrow_for_a_step(self):
+        m = walking_mita()
+        m.prompt = (490, 615, 525, 720)
+        for _ in range(120):
+            m.step()
+            self.assertEqual((m.mode, m.X, m.Y), ("perch", 507.5, -135))
+        m.prompt = (400, 615, 650, 720)
+        for _ in range(61):
+            m.step()
+        self.assertEqual(m.mode, "walk")
+        self.assertGreater(m.X, 507.5)
+
 if __name__ == "__main__":
     unittest.main()

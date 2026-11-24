@@ -431,7 +431,13 @@ class Mascot:
         if self.on == "ledge":
             margin = min(self.cw / 2, (x2 - x1) / 2)
             x1, x2 = x1 + margin, x2 - margin
+        if self.on == "ledge" or self.mode == "walk":
             self.X = min(x2, max(x1, self.X))
+        if (self.on == "ledge" and self.mode in ("walk", "perch")
+                and x2 - x1 < 2 + len(walk.FIRST_STEP) * SCALE):
+            # После изменения ширины поля между краями может не поместиться даже первый шаг.
+            self.mode, self.timer = "perch", 60
+            return
 
         if self.mode == "tip":
             self.air_pose = min(2.0, self.air_pose + .5 * dt)
