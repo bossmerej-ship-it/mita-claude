@@ -29,6 +29,8 @@ import traceback
 import tkinter as tk
 from pathlib import Path
 
+import fall_motion as motion
+
 if sys.platform == "darwin":
     import platform_mac as plat       # macOS: Quartz + pyobjc
 else:
@@ -110,6 +112,7 @@ class Mascot:
         for f in SPRITES.glob("*.png"):
             im = tk.PhotoImage(file=str(f))
             self.img[f.stem] = im.zoom(SCALE, SCALE) if SCALE > 1 else im
+        self.img.update(motion.load_poses(self.root, SPRITES / "motion" / "fall.png", SCALE))
         self.cw = max(i.width() for i in self.img.values()) + 2
         self.base = max(i.height() for i in self.img.values()) + 6   # линия ног на холсте
         self.ch = self.base + LEG + 2
