@@ -56,5 +56,31 @@ class WalkMotionTests(unittest.TestCase):
         self.assertGreater(m.X, 650)
         self.assertEqual(m.pick(), pose)
 
+    def test_turn_keeps_position_and_passes_through_both_three_quarter_views(self):
+        for incoming in (-1, 1):
+            m = walking_mita(incoming)
+            m.X = 145 if incoming < 0 else 855
+            for _ in range(10):
+                m.step()
+                if m.mode == "turn":
+                    break
+            self.assertEqual(m.mode, "turn")
+            x = m.X
+            views = []
+            for _ in range(30):
+                name, drop = m.pick()
+                self.assertEqual((m.X, drop), (x, 0))
+                if not views or name != views[-1]:
+                    views.append(name)
+                m.step(.5)
+                if m.mode != "turn":
+                    break
+            self.assertEqual(m.mode, "walk")
+            angles = ["front34", "front", "front34_left"]
+            self.assertEqual(views[1:-1], angles if incoming < 0 else angles[::-1])
+            self.assertEqual(views[-1], m.pick()[0])
+            m.step()
+            self.assertGreater((m.X - x) * -incoming, 0)
+
 if __name__ == "__main__":
     unittest.main()

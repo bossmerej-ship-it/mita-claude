@@ -58,7 +58,7 @@ SCALE = 1             # только целое число: 1 = 41x86, 2 = 82x17
 TARGETS = ("Claude", "Codex", "ChatGPT")
 TICK_MS = 33          # базовый такт для скоростей и длительностей
 TICK_SECONDS = TICK_MS / 1000
-MOTION_FRAME_MS = 16  # чаще рисуем движение мышью, полёт и приземление
+MOTION_FRAME_MS = 16  # интервал между кадрами движения, мс
 SPEED = 1.2           # ходьба, пикселей за базовый такт
 CLIMB = 1.0           # лазанье, пикселей за базовый такт
 GRAVITY = 0.7         # ускорение падения
@@ -505,7 +505,7 @@ class Mascot:
         if m == "walk":
             return walk.sprite(self.walk_pixels, SCALE, self.dir), 0
         if m == "turn":
-            return ("front34" + left) if self.timer > 6 else "front", 0
+            return walk.turn_sprite(self.timer, self.dir, self.walk_pixels, SCALE), 0
         if m == "look":
             return ("back34" + left) if self.timer > 8 else ("front34" + left), 0
         return "front", 0
@@ -579,7 +579,7 @@ class Mascot:
             self.set_shown(True)
         else:
             self.set_shown(False)
-        period = MOTION_FRAME_MS if self.mode in ("held", "fall", "land", "tip", "crash") else TICK_MS
+        period = MOTION_FRAME_MS if self.mode in ("held", "fall", "land", "tip", "crash", "walk", "turn") else TICK_MS
         spent_ms = (time.monotonic() - now) * 1000
         self.root.after(max(1, round(period - spent_ms)), self.tick)
 
