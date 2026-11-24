@@ -1,7 +1,9 @@
 import copy
 import json
 import tempfile
+import time
 import unittest
+from collections import deque
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
@@ -39,7 +41,9 @@ class PromptSeatTests(unittest.TestCase):
         self.m.dir = 1
         self.m.root, self.m.canvas = Mock(), Mock()
         self.m.img, self.m.sprite, self.m.own = {"front": Mock()}, 1, 999
-        self.m.trail = []
+        self.m.trail = deque()
+        self.m.air_pose = self.m.air_ticks = 0.0
+        self.m.last_tick = time.monotonic()
 
     def seat(self, modifier=0x0001):
         self.m.on_release(SimpleNamespace(state=modifier))

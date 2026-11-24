@@ -25,8 +25,10 @@ Claude Desktop не меняется, поэтому всё переживает
 import json
 import random
 import sys
+import time
 import traceback
 import tkinter as tk
+from collections import deque
 from pathlib import Path
 
 import fall_motion as motion
@@ -141,7 +143,8 @@ class Mascot:
         self.frame = 0
         self.edge_cooldown = 0
         self.held = False
-        self.trail = []           # последние точки мышки, чтобы посчитать бросок
+        self.trail = deque()      # время и координаты последних движений мыши
+        self.air_pose = self.air_ticks = 0.0
         self.world = None
         self.prompt = None        # настоящий прямоугольник поля ввода (экранные координаты)
         self.auto_prompt_apps = set()
@@ -213,33 +216,30 @@ class Mascot:
             self.save()
         self.on = None
         self.mode = "held"
+        self.air_pose = self.air_ticks = 0.0
         self.grab = (e.x - self.cw // 2, e.y - self.base)
-        self.trail = [self.pointer_world()]
+        self.trail.clear()
+        motion.record_drag(self.trail, time.monotonic(), self.pointer_world())
 
     def on_drag(self, _e):
         if not self.held or self.world is None:
             return
         px, py = self.pointer_world()
         self.X, self.Y = px - self.grab[0], py - self.grab[1]
-        self.trail = (self.trail + [(px, py)])[-4:]
+        motion.record_drag(self.trail, time.monotonic(), (px, py))
 
     def on_release(self, e):
         if not self.held:
             return
+        now = time.monotonic()
         self.held = False
         self.refresh_prompt()
         plat.refocus(self.target[0])                 # фокус остаётся у Claude/ChatGPT
         if e.state & 0x0001 or (sys.platform != "darwin" and e.state & 0x0004):
             self.sit_on_ledge()                     # Shift (или Ctrl на Windows): сесть на край
             return
-        if len(self.trail) >= 2:                     # бросок: скорость последних движений мышки
-            (x0, y0), (x1, y1) = self.trail[0], self.trail[-1]
-            n = len(self.trail) - 1
-            self.vx = max(-22, min(22, (x1 - x0) / n))
-            self.vy = max(-22, min(22, (y1 - y0) / n))
-        else:
-            self.vx = self.vy = 0
-        self.mode = "fall"
+        self.last_tick = now
+        self.start_fall(*motion.throw_velocity(self.trail, now, TICK_SECONDS), pose=self.air_pose)
 
     def on_right(self, e):
         if e.state & 0x0001:                         # Shift + ПКМ = выход
@@ -256,8 +256,7 @@ class Mascot:
             if self.on:
                 self.mode, self.timer = "idle", 20
             else:
-                self.vx = self.vy = 0
-                self.mode = "fall"
+                self.start_fall()
         self.save()
 
     def save(self):
@@ -273,14 +272,54 @@ class Mascot:
         return None
 
     # ---------- поведение ----------
+    def start_fall(self, vx=0.0, vy=0.0, pose=0.0):
+        self.mode, self.on = "fall", None
+        self.vx, self.vy = vx, vy
+        self.air_pose, self.air_ticks = pose, 0.0
+        if abs(vx) > 1:
+            self.dir = 1 if vx > 0 else -1
+
+    def horizontal_flight(self, ticks):
+        width = self.world[2] - self.world[0]
+        margin = min(20, width / 2)
+        left, right = margin, width - margin
+        x = min(right, max(left, self.X)) + self.vx * ticks
+        if left <= x <= right:
+            return x, self.vx
+        wall = left if x < left else right
+        return min(right, max(left, wall - .5 * (x - wall))), -.5 * self.vx
+
+    def step_fall(self, plats, dt):
+        # Одна траектория определяет и подготовку к касанию, и сам момент удара.
+        # Проверяем X именно в момент пересечения верхней границы поля ввода.
+        contact, when = None, 6.0
+        for name, (surface_y, x1, x2) in plats.items():
+            crossing = motion.crossing_time(surface_y - self.Y, self.vy, GRAVITY, MAX_FALL)
+            if crossing <= when and x1 <= self.horizontal_flight(crossing)[0] <= x2:
+                contact, when = name, crossing
+
+        goal = 1 + min(1, max(0, (abs(self.vx) - 4) / 8))
+        if contact is not None:
+            impact = min(MAX_FALL, self.vy + GRAVITY * when)
+            goal = 2.0 if impact > HARD_LANDING else 0.0
+        travel = min(dt, when) if contact is not None else dt
+        self.air_pose = motion.approach_pose(self.air_pose, goal, travel)
+        self.air_ticks += travel
+        self.X, self.vx = self.horizontal_flight(travel)
+        distance, self.vy = motion.fall_travel(self.vy, travel, GRAVITY, MAX_FALL)
+        self.Y += distance
+        if contact is not None and when <= dt:
+            self.land(contact, self.vy)
+        elif self.Y > plats["floor"][0] + 400:
+            self.land("floor", 0)
+
     def land(self, name, speed):
         self.on = name
         self.Y = self.platforms()[name][0]
-        if abs(self.vx) > 0.5:
-            self.dir = 1 if self.vx > 0 else -1
         self.vx = self.vy = 0
         if speed > HARD_LANDING:
-            self.mode, self.crash_i = "crash", 0     # шлёпнулась: дальше вся сцена CRASH
+            self.mode = "tip" if self.air_pose < 1.95 else "crash"
+            self.crash_i = 0
             self.timer = CRASH[0][1]
         else:
             self.mode, self.timer = "land", 7        # присела от приземления
@@ -315,22 +354,25 @@ class Mascot:
             self.mode = "climb_down"
             self.on = None
         elif r < 0.45:
-            self.mode, self.on = "fall", None          # спрыгнула
-            self.vx, self.vy = self.dir * 2.5, -5
+            self.start_fall(self.dir * 2.5, -5)        # спрыгнула
         else:
             self.X = min(max(self.X, x1 + 1), x2 - 1)
             self.start_turn()
         self.edge_cooldown = 90
 
-    def step(self):
+    def step(self, dt=1.0):
         plats = self.platforms()
         if self.edge_cooldown > 0:
-            self.edge_cooldown -= 1
+            self.edge_cooldown = max(0, self.edge_cooldown - dt)
 
         if self.mode == "held":
+            vx, _ = motion.throw_velocity(self.trail, time.monotonic(), TICK_SECONDS)
+            self.air_pose = motion.approach_pose(self.air_pose, .4 if abs(vx) > 4 else 0, dt)
+            if abs(vx) > 4:
+                self.dir = 1 if vx > 0 else -1
             return
         if (self.on == "ledge" or self.mode in ("climb_up", "climb_down")) and "ledge" not in plats:
-            self.mode, self.on, self.vx, self.vy = "fall", None, 0, 0
+            self.start_fall()
         if self.mode == "sit":
             w = self.world[2] - self.world[0]
             if self.on in plats:
@@ -345,28 +387,11 @@ class Mascot:
             return
 
         if self.mode == "fall":
-            prev = self.Y
-            self.vy = min(MAX_FALL, self.vy + GRAVITY)
-            self.X += self.vx
-            self.Y += self.vy
-            w = self.world[2] - self.world[0]
-            if self.X < 20 or self.X > w - 20:      # стены окна: отскок
-                self.X = min(max(self.X, 20), w - 20)
-                self.vx = -self.vx * 0.5
-                self.dir = 1 if self.vx > 0 else -1
-            if self.vy >= 0:
-                hit = [(py, name) for name, (py, x1, x2) in plats.items()
-                       if x1 <= self.X <= x2 and prev <= py <= self.Y]
-                if hit:
-                    py, name = min(hit)
-                    self.land(name, self.vy)
-            if self.Y > plats["floor"][0] + 400:    # улетела за низ — вернуть на пол
-                self.Y = plats["floor"][0]
-                self.land("floor", 0)
+            self.step_fall(plats, dt)
             return
 
         if self.mode == "climb_up":
-            self.Y -= CLIMB
+            self.Y -= CLIMB * dt
             if self.Y <= plats["ledge"][0]:
                 self.on = "ledge"
                 self.Y = plats["ledge"][0]
@@ -375,7 +400,7 @@ class Mascot:
             return
 
         if self.mode == "climb_down":
-            self.Y += CLIMB
+            self.Y += CLIMB * dt
             if self.Y >= plats["floor"][0]:
                 self.on = "floor"
                 self.Y = plats["floor"][0]
@@ -384,7 +409,7 @@ class Mascot:
 
         # стоит на уступе: держимся на нём, даже если окно поменяло размер
         if self.on is None:
-            self.mode, self.vy, self.vx = "fall", 0, 0
+            self.start_fall()
             return
         py, x1, x2 = plats[self.on]
         self.Y = py
@@ -394,9 +419,15 @@ class Mascot:
             x1, x2 = x1 + margin, x2 - margin
             self.X = min(x2, max(x1, self.X))
 
-        self.timer -= 1
+        if self.mode == "tip":
+            self.air_pose = min(2.0, self.air_pose + .5 * dt)
+            if self.air_pose == 2.0:
+                self.mode = "crash"
+            return
+
+        self.timer -= dt
         if self.mode == "walk":
-            self.X += SPEED * self.dir
+            self.X += SPEED * self.dir * dt
             if self.X <= x1 or self.X >= x2:
                 self.at_edge(self.on, x1, x2)
                 return
@@ -404,7 +435,7 @@ class Mascot:
             if self.on == "floor" and self.edge_cooldown == 0 and "ledge" in plats:
                 lp, lx1, lx2 = plats["ledge"]
                 for edge in (lx1, lx2):
-                    if abs(self.X - edge) < SPEED and py - lp > 20 and random.random() < 0.5:
+                    if abs(self.X - edge) < SPEED * dt and py - lp > 20 and random.random() < 0.5:
                         self.X = edge
                         self.mode, self.on = "climb_up", None
                         self.dir = 1 if edge == lx1 else -1
@@ -430,28 +461,24 @@ class Mascot:
         f = self.frame
         left = "_left" if self.dir < 0 else ""
         m = self.mode
-        if m == "held":
-            moving = len(self.trail) >= 2 and abs(self.trail[-1][0] - self.trail[0][0]) > 3
-            if moving:                                   # мотают — паникует
-                return "fall_panic" + ("_left" if (f // 4) % 2 else ""), 0
-            return "held", 0
+        if m in ("held", "fall", "tip"):
+            return motion.air_sprite(self.air_pose, self.air_ticks) + left, 0
         if m in ("sit", "perch"):
             if self.on == "ledge":                       # сидит на краю, болтает ножками
-                return ("sit0" if (f // 20) % 2 else "sit1"), LEG
+                drop = motion.eased_drop(self.timer / 4, LEG) if m == "perch" else LEG
+                return ("sit0" if (f // 20) % 2 else "sit1") + left, drop
             return "front", 0
-        if m == "fall":
-            if abs(self.vx) > 3:                         # летит вбок — «рыбкой»
-                return "fall_dive" + ("_left" if self.vx < 0 else ""), 0
-            if self.vy > 4:                              # падает — машет руками
-                return "fall_panic" + ("_left" if (f // 5) % 2 else ""), 0
-            return "front34" + left, 0
         if m == "land":
-            return "squash", 0
+            age = len(motion.CUSHION) - self.timer
+            name = motion.CUSHION[min(len(motion.CUSHION) - 1, max(0, int(age)))]
+            # В конце мягкой посадки ноги постепенно свешиваются за край чата.
+            drop = motion.eased_drop(1 - self.timer / 3, LEG) if self.on == "ledge" else 0
+            return name + left, drop
         if m == "crash":
             name = CRASH[self.crash_i][0]
             if name == "dazed":                          # звёздочки кружатся, иногда дёргается
                 name = "dazed1" if (f // 7) % 3 else "dazed2"
-            return name + left, self.drops.get(name, 0)
+            return name + left, SCALE * self.drops.get(name, 0)
         if m in ("climb_up", "climb_down"):
             return ("back_step0" if (f // 8) % 2 else "back_step1"), 0
         if m == "walk":
