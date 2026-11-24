@@ -109,5 +109,40 @@ class WalkMotionTests(unittest.TestCase):
             self.assertEqual(poses[-1], (angle, 0))
             self.assertEqual((m.mode, m.X), ("walk", 500.25))
 
+    def test_planted_shoe_stays_on_same_screen_pixels_in_both_half_cycles(self):
+        try:
+            root = tk.Tk()
+        except tk.TclError as exc:
+            self.skipTest(str(exc))
+        root.withdraw()
+        self.addCleanup(root.destroy)
+        for scale in (1, 2):
+            images = overlay.motion.load_poses(root, overlay.SPRITES / "motion" / "walk.png",
+                                               scale, cell=walk.CELL, rows=walk.POSE_ROWS)
+            for direction in (-1, 1):
+                with self.subTest(scale=scale, direction=direction), patch.object(overlay, "SCALE", scale):
+                    m = walking_mita(direction)
+                    start = round(m.X)
+                    contacts = [[], []]
+                    for _ in range(200):
+                        m.step(.5)
+                        x = round(m.X)
+                        image = images[m.pick()[0]]
+                        soles = {x + i - image.width() // 2 for i in range(image.width())
+                                 if not image.transparency_get(i, image.height() - 1)}
+                        self.assertTrue(soles, "Обе ноги оказались над поверхностью")
+                        travelled = abs(x - start)
+                        for i, (lo, hi) in enumerate(((12, 20), (28, 36))):
+                            if lo * scale <= travelled <= hi * scale:
+                                contacts[i].append(soles)
+                        if travelled >= 37 * scale:
+                            break
+                    else:
+                        self.fail("Мита не прошла полный цикл ходьбы")
+                    planted = [set.intersection(*half) for half in contacts]
+                    self.assertTrue(all(len(foot) >= 2 * scale for foot in planted))
+                    self.assertGreater(direction * (min(planted[1]) - min(planted[0])), 10 * scale)
+
+
 if __name__ == "__main__":
     unittest.main()
