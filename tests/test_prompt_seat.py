@@ -155,6 +155,24 @@ class PromptSeatTests(unittest.TestCase):
                 return
         self.fail("Mascot never landed")
 
+    def test_plain_drop_lands_on_real_prompt_then_sits_and_walks(self):
+        self.drop_above_prompt()
+        self.assertEqual(self.m.mode, "fall")
+        self.fall_until_landing()
+        self.assertEqual((self.m.on, self.m.Y), ("ledge", -200))
+        for _ in range(7):
+            self.m.step()
+        self.assertEqual(self.m.mode, "perch")
+        self.assertEqual(self.m.pick()[1], overlay.LEG)
+        self.assertFalse(self.m.st["sit"])
+        self.assertEqual(self.m.st["ledges"], {})
+        for _ in range(60):
+            self.m.step()
+        self.assertEqual(self.m.mode, "walk")
+        x = self.m.X
+        self.m.step()
+        self.assertGreater(self.m.X, x)
+
     def test_drop_outside_prompt_width_reaches_floor(self):
         self.drop_above_prompt(x=100)
         self.fall_until_landing()
@@ -212,6 +230,16 @@ class PromptSeatTests(unittest.TestCase):
             self.m.step()
         self.assertEqual(self.m.mode, "turn")
         self.assertLess(self.m.X, 800 - self.m.cw / 2)
+
+    def test_automatic_rest_is_followed_by_walking(self):
+        self.drop_above_prompt()
+        self.fall_until_landing()
+        with patch.object(overlay.random, "random", return_value=.1):
+            self.m.next_action()
+        self.assertEqual(self.m.mode, "perch")
+        self.m.timer = 1
+        self.m.step()
+        self.assertEqual(self.m.mode, "walk")
 
     def test_picking_up_previously_pinned_mascot_enables_plain_drop(self):
         self.seat()

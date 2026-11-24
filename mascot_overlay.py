@@ -5,6 +5,7 @@
 
   ЛКМ (зажать и тащить)   взять её на руки. Отпустишь, и она упадёт.
                           Если резко дёрнуть, она полетит, как брошенная.
+                          Над полем ввода — приземлится на его край, посидит и пойдёт гулять.
   Shift + отпустить ЛКМ   посадить на край поля ввода здесь и запомнить место.
                           На Windows также можно использовать Ctrl.
   ПКМ                     «сиди!»: она садится (на уступе свешивает ножки) и остаётся на месте,
@@ -280,6 +281,9 @@ class Mascot:
             self.mode, self.timer = "land", 7        # присела от приземления
 
     def next_action(self):
+        if self.on == "ledge" and random.random() < 0.3:
+            self.mode, self.timer = "perch", random.randint(60, 140)
+            return
         r = random.random()
         if r < 0.6:
             self.mode, self.timer = "walk", random.randint(60, 220)
@@ -402,14 +406,17 @@ class Mascot:
                         self.edge_cooldown = 90
                         return
         if self.timer <= 0:
-            if self.mode == "turn":
+            if self.mode in ("turn", "perch"):
                 self.mode, self.timer = "walk", random.randint(60, 200)
+            elif self.mode == "land" and self.on == "ledge":
+                self.mode, self.timer = "perch", 60
             elif self.mode == "crash":
                 self.crash_i += 1
                 if self.crash_i < len(CRASH):
                     self.timer = CRASH[self.crash_i][1]
                 else:
-                    self.mode, self.timer = "idle", 40
+                    self.mode = "perch" if self.on == "ledge" else "idle"
+                    self.timer = 60
             else:
                 self.next_action()
 
@@ -423,7 +430,7 @@ class Mascot:
             if moving:                                   # мотают — паникует
                 return "fall_panic" + ("_left" if (f // 4) % 2 else ""), 0
             return "held", 0
-        if m == "sit":
+        if m in ("sit", "perch"):
             if self.on == "ledge":                       # сидит на краю, болтает ножками
                 return ("sit0" if (f // 20) % 2 else "sit1"), LEG
             return "front", 0
