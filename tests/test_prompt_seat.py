@@ -195,6 +195,24 @@ class PromptSeatTests(unittest.TestCase):
         self.m.step()
         self.assertEqual(self.m.mode, "fall")
 
+    def test_sitting_tracks_prompt_height_and_width_changes(self):
+        self.drop_above_prompt()
+        self.fall_until_landing()
+        self.m.mode, self.m.timer = "perch", 60
+        overlay.plat.prompt_rect.return_value = (400, 600, 650, 860)
+        self.tick_in("Codex")
+        self.assertEqual(self.m.Y, -300)
+        self.assertLessEqual(self.m.X, 550 - self.m.cw / 2)
+
+    def test_walking_turns_at_actual_prompt_edge(self):
+        self.drop_above_prompt()
+        self.fall_until_landing()
+        self.m.mode, self.m.timer, self.m.X = "walk", 60, 800
+        with patch.object(overlay.random, "random", return_value=.9):
+            self.m.step()
+        self.assertEqual(self.m.mode, "turn")
+        self.assertLess(self.m.X, 800 - self.m.cw / 2)
+
     def test_picking_up_previously_pinned_mascot_enables_plain_drop(self):
         self.seat()
         with patch.object(self.m, "pointer_world", return_value=(650, -250)):

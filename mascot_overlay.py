@@ -380,6 +380,11 @@ class Mascot:
         py, x1, x2 = plats[self.on]
         self.Y = py
 
+        if self.on == "ledge":
+            margin = min(self.cw / 2, (x2 - x1) / 2)
+            x1, x2 = x1 + margin, x2 - margin
+            self.X = min(x2, max(x1, self.X))
+
         self.timer -= 1
         if self.mode == "walk":
             self.X += SPEED * self.dir
