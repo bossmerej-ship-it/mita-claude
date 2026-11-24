@@ -5,6 +5,7 @@
 
   ЛКМ (зажать и тащить)   взять её на руки. Отпустишь, и она упадёт.
                           Если резко дёрнуть, она полетит, как брошенная.
+                          Над полем ввода — приземлится на его край, посидит и пойдёт гулять.
   Shift + отпустить ЛКМ   посадить на край поля ввода здесь и запомнить место.
                           На Windows также можно использовать Ctrl.
   ПКМ                     «сиди!»: она садится (на уступе свешивает ножки) и остаётся на месте,
@@ -137,6 +138,8 @@ class Mascot:
         self.held = False
         self.trail = []           # последние точки мышки, чтобы посчитать бросок
         self.world = None
+        self.prompt = None        # настоящий прямоугольник поля ввода (экранные координаты)
+        self.auto_prompt_apps = set()
         self.placed = False
         self.target = (None, None)   # (окно, "Claude"/"Codex")
         self.shown = None            # видна ли сейчас (меняем только при изменении)
@@ -148,8 +151,14 @@ class Mascot:
         w = r - l
         floor_y = min(b, wb) - b
         plats = {"floor": (floor_y, 0, w)}
+        prompt = self.prompt
         ledge = self.st["ledges"].get(self.target[1])
-        if ledge is not None or USE_LEDGE:
+        if prompt is not None:
+            pl, pt, pr, pb = prompt
+            x1, x2 = max(0, pl - l), min(w, pr - l)
+            if x2 > x1 and t <= pt < min(b, wb):
+                plats["ledge"] = (pt - b, x1, x2)
+        elif (ledge is not None or USE_LEDGE) and self.target[1] not in self.auto_prompt_apps:
             ledge = ledge if ledge is not None else DEFAULT_LEDGE
             cx = min(w, max(0, w / 2 + ledge["dx"]))
             # При уменьшении окна уступ остаётся между верхом окна и полом.
@@ -170,12 +179,18 @@ class Mascot:
         """Пользователь показывает край поля ввода: ноги свешиваются ниже этого края."""
         w = self.world[2] - self.world[0]
         self.st["ledges"][self.target[1]] = {"dx": round(self.X - w / 2), "dy": round(-self.Y)}
+        self.auto_prompt_apps.discard(self.target[1])
         self.st["sit"] = True
         self.mode, self.on = "sit", "ledge"
         self.vx = self.vy = 0
         self.remember_sit()
         self.step()
         self.save()
+
+    def refresh_prompt(self):
+        self.prompt = plat.prompt_rect(self.target[0], self.world[:4])
+        if self.prompt is not None:
+            self.auto_prompt_apps.add(self.target[1])
 
     # ---------- мышка ----------
     def pointer_world(self):
@@ -186,6 +201,11 @@ class Mascot:
         if self.world is None:
             return
         self.held = True
+        # Подняли даже закреплённую Миту: после отпускания снова действует физика.
+        if self.st["sit"]:
+            self.st["sit"] = False
+            self.st["sitpos"].pop(self.target[1], None)
+            self.save()
         self.on = None
         self.mode = "held"
         self.grab = (e.x - self.cw // 2, e.y - self.base)
@@ -202,14 +222,10 @@ class Mascot:
         if not self.held:
             return
         self.held = False
+        self.refresh_prompt()
         plat.refocus(self.target[0])                 # фокус остаётся у Claude/ChatGPT
         if e.state & 0x0001 or (sys.platform != "darwin" and e.state & 0x0004):
             self.sit_on_ledge()                     # Shift (или Ctrl на Windows): сесть на край
-            return
-        if self.st["sit"]:                           # сказали сидеть — остаётся, где отпустили
-            self.mode, self.on = "sit", self.platform_under_feet()
-            self.remember_sit()
-            self.save()
             return
         if len(self.trail) >= 2:                     # бросок: скорость последних движений мышки
             (x0, y0), (x1, y1) = self.trail[0], self.trail[-1]
@@ -265,6 +281,9 @@ class Mascot:
             self.mode, self.timer = "land", 7        # присела от приземления
 
     def next_action(self):
+        if self.on == "ledge" and random.random() < 0.3:
+            self.mode, self.timer = "perch", random.randint(60, 140)
+            return
         r = random.random()
         if r < 0.6:
             self.mode, self.timer = "walk", random.randint(60, 220)
@@ -305,6 +324,8 @@ class Mascot:
 
         if self.mode == "held":
             return
+        if (self.on == "ledge" or self.mode in ("climb_up", "climb_down")) and "ledge" not in plats:
+            self.mode, self.on, self.vx, self.vy = "fall", None, 0, 0
         if self.mode == "sit":
             w = self.world[2] - self.world[0]
             if self.on in plats:
@@ -363,6 +384,11 @@ class Mascot:
         py, x1, x2 = plats[self.on]
         self.Y = py
 
+        if self.on == "ledge":
+            margin = min(self.cw / 2, (x2 - x1) / 2)
+            x1, x2 = x1 + margin, x2 - margin
+            self.X = min(x2, max(x1, self.X))
+
         self.timer -= 1
         if self.mode == "walk":
             self.X += SPEED * self.dir
@@ -380,14 +406,17 @@ class Mascot:
                         self.edge_cooldown = 90
                         return
         if self.timer <= 0:
-            if self.mode == "turn":
+            if self.mode in ("turn", "perch"):
                 self.mode, self.timer = "walk", random.randint(60, 200)
+            elif self.mode == "land" and self.on == "ledge":
+                self.mode, self.timer = "perch", 60
             elif self.mode == "crash":
                 self.crash_i += 1
                 if self.crash_i < len(CRASH):
                     self.timer = CRASH[self.crash_i][1]
                 else:
-                    self.mode, self.timer = "idle", 40
+                    self.mode = "perch" if self.on == "ledge" else "idle"
+                    self.timer = 60
             else:
                 self.next_action()
 
@@ -401,7 +430,7 @@ class Mascot:
             if moving:                                   # мотают — паникует
                 return "fall_panic" + ("_left" if (f // 4) % 2 else ""), 0
             return "held", 0
-        if m == "sit":
+        if m in ("sit", "perch"):
             if self.on == "ledge":                       # сидит на краю, болтает ножками
                 return ("sit0" if (f // 20) % 2 else "sit1"), LEG
             return "front", 0
@@ -460,6 +489,7 @@ class Mascot:
             return
         l, t, r, b = plat.window_rect(claude)
         self.world = (l, t, r, b, plat.work_bottom(claude))
+        self.refresh_prompt()
 
         if not self.placed:                              # первый кадр: на уступ или туда, где сидела
             self.placed = True
