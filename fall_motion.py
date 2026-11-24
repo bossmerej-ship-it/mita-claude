@@ -22,11 +22,11 @@ CUSHION = ("cushion1", "cushion3", "squash", "cushion3", "cushion2", "cushion1",
 DRAG_WINDOW = 0.11  # секунды
 
 
-def load_poses(root, path, scale):
+def load_poses(root, path, scale, *, cell=CELL, rows=POSE_ROWS):
     sheet = tk.PhotoImage(master=root, file=str(path))
-    width, height = CELL
+    width, height = cell
     poses = {}
-    for row, names in enumerate(POSE_ROWS):
+    for row, names in enumerate(rows):
         for column, name in enumerate(names):
             x, y = column * width, row * height
             image = tk.PhotoImage(master=root)
