@@ -12,6 +12,11 @@ import os
 import Quartz
 from AppKit import NSApplication, NSRunningApplication, NSScreen
 
+from prompt_detection import PromptDetector
+from prompt_mac import read_prompt
+
+_prompt_detector = PromptDetector(read_prompt)
+
 BG = "systemTransparent"
 # На маке правая кнопка у Tk — это Button-2 (а у некоторых мышей Button-3), плюс Ctrl+клик.
 RIGHT_BUTTONS = ("<Button-2>", "<Button-3>", "<Control-Button-1>")
@@ -76,6 +81,7 @@ def _normal(w):
         return None
     return {
         "pid": int(w.get(Quartz.kCGWindowOwnerPID)),
+        "id": int(w.get(Quartz.kCGWindowNumber, 0)),
         "owner": str(w.get(Quartz.kCGWindowOwnerName) or ""),
         "bounds": (int(b["X"]), int(b["Y"]), int(b["X"] + b["Width"]), int(b["Y"] + b["Height"])),
     }
@@ -158,3 +164,8 @@ def refocus(win):
             app.activateWithOptions_(_ACTIVATE_IGNORING_OTHERS)
     except Exception:
         pass
+
+
+def prompt_rect(win, bounds):
+    # Bounds distinguish multiple windows of the same macOS process.
+    return _prompt_detector.get((win["pid"], win["id"]), win, bounds)
