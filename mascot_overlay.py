@@ -129,6 +129,8 @@ class Mascot:
                                           cell=activities.CELL, rows=activities.GAME_ROWS))
         self.img.update(motion.load_poses(self.root, SPRITES / "motion" / "greeting.png", SCALE,
                                           cell=activities.CELL, rows=activities.GREET_ROWS))
+        self.img.update(motion.load_poses(self.root, SPRITES / "motion" / "sleep.png", SCALE,
+                                          cell=activities.CELL, rows=activities.REST_ROWS))
         self.cw = max(i.width() for i in self.img.values()) + 2
         self.base = max(i.height() for i in self.img.values()) + 6   # линия ног на холсте
         self.ch = self.base + LEG + 2
@@ -236,6 +238,7 @@ class Mascot:
         if self.world is None:
             return
         self.held = True
+        self.activities.held_rub = activities.RUB_TICKS if self.mode in activities.REST_MODES else 0
         self.activities.greeting.cancel()
         # Подняли даже закреплённую Миту: после отпускания снова действует физика.
         if self.st["sit"]:
@@ -303,6 +306,7 @@ class Mascot:
     # ---------- поведение ----------
     def start_fall(self, vx=0.0, vy=0.0, pose=0.0):
         self.activities.greeting.cancel()
+        self.activities.held_rub = 0
         self.mode, self.on = "fall", None
         self.vx, self.vy = vx, vy
         self.air_pose, self.air_ticks = pose, 0.0
@@ -386,6 +390,45 @@ class Mascot:
             self.dir *= -1  # после игры пойдёт от края обратно
         self.mode, self.timer = "game", self.activities.begin_game(seated)
 
+    def update_sleep(self, visible, now):
+        act = self.activities
+        resting = self.mode in activities.REST_MODES
+        if (not visible or self.on is None or now < act.next_idle_check
+                or self.mode == "wake" or not (resting or self.mode in activities.CAN_START_REST)):
+            return
+        act.next_idle_check = now + .5
+        idle = plat.idle_seconds()
+        if idle is None:
+            return
+        if resting and idle < activities.SLEEP_AFTER_SECONDS:
+            phase = "wake"
+        elif not resting and idle >= activities.SLEEP_AFTER_SECONDS:
+            act.rest_pinned = self.mode == "sit"
+            phase = "yawn"
+        else:
+            return
+        act.rest_drop = self.pick()[1]
+        act.greeting.cancel()
+        self.mode, self.timer = phase, activities.REST_PHASES[phase][-1][0]
+
+    def step_rest(self, dt):
+        if self.mode == "sleep":
+            self.timer += dt
+            return
+        self.timer -= dt
+        if self.timer > 0:
+            return
+        if self.mode == "yawn":
+            self.mode, self.timer = "doze", activities.REST_PHASES["doze"][-1][0] + self.timer
+        elif self.mode == "doze":
+            self.mode, self.timer = "sleep", -self.timer
+        elif self.activities.rest_pinned:
+            self.mode, self.timer = "sit", 0
+        elif self.on == "ledge":
+            self.mode, self.timer = "perch", 8
+        else:
+            self.mode, self.timer = "idle", 20
+
     def at_edge(self, name):
         """Дошла до края уступа: развернуться, слезть или спрыгнуть."""
         if name == "ledge" and self.activities.game_wait <= 0:
@@ -411,6 +454,7 @@ class Mascot:
             self.edge_cooldown = max(0, self.edge_cooldown - dt)
 
         if self.mode == "held":
+            self.activities.held_rub = max(0, self.activities.held_rub - dt)
             vx, _ = motion.throw_velocity(self.trail, time.monotonic(), TICK_SECONDS)
             self.air_pose = motion.approach_pose(self.air_pose, .4 if abs(vx) > 4 else 0, dt)
             if abs(vx) > 4:
@@ -418,7 +462,8 @@ class Mascot:
             return
         if (self.on == "ledge" or self.mode in ("climb_up", "climb_down")) and "ledge" not in plats:
             self.start_fall()
-        if self.mode == "sit":
+        resting = self.mode in activities.REST_MODES
+        if self.mode == "sit" or resting and self.activities.rest_pinned:
             w = self.world[2] - self.world[0]
             if self.on in plats:
                 self.Y, x1, x2 = plats[self.on]
@@ -429,6 +474,8 @@ class Mascot:
                 x1, x2 = 0, w
             margin = min(self.cw / 2, (x2 - x1) / 2)
             self.X = min(x2 - margin, max(x1 + margin, self.X))
+            if resting:
+                self.step_rest(dt)
             return
 
         if self.mode == "fall":
@@ -462,8 +509,11 @@ class Mascot:
         if self.on == "ledge":
             margin = min(self.cw / 2, (x2 - x1) / 2)
             x1, x2 = x1 + margin, x2 - margin
-        if self.on == "ledge" or self.mode == "walk":
+        if self.on == "ledge" or self.mode == "walk" or resting:
             self.X = min(x2, max(x1, self.X))
+        if resting:
+            self.step_rest(dt)
+            return
         if self.activities.greeting.remaining > 0:
             return  # стопы остаются на опоре, таймер игры продолжится после приветствия
         if self.on == "ledge" and self.mode in activities.FREE_MODES:
@@ -530,6 +580,10 @@ class Mascot:
         f = self.frame
         left = "_left" if self.dir < 0 else ""
         m = self.mode
+        if m in activities.REST_MODES:
+            return activities.rest_pose(m, self.timer, self.dir, self.on == "ledge", self.activities.rest_drop, LEG)
+        if m == "held" and self.activities.held_rub > 0:
+            return activities.held_rub_pose(self.activities.held_rub, self.dir)
         if self.activities.greeting.remaining > 0:
             seated = self.on == "ledge" and m in ("sit", "perch", "game")
             return self.activities.greeting.pose(m, seated), LEG if seated else 0
@@ -628,11 +682,12 @@ class Mascot:
 
         self.step(dt)
         visible = self.held or self.mode == "fall" or plat.is_foreground(claude, self.own)
+        self.update_sleep(visible, now)
         self.update_cursor(visible, dt)
         name, drop = self.pick()
         self.canvas.itemconfig(self.sprite, image=self.img.get(name, self.img["front"]))
         self.canvas.coords(self.sprite, self.cw // 2, self.base + drop)
-        bob = 1 if self.mode == "idle" and (self.frame // 25) % 2 else 0
+        bob = 1 if self.mode == "idle" and self.activities.greeting.remaining <= 0 and (self.frame // 25) % 2 else 0
 
         if visible:
             wx = l + round(self.X) - self.cw // 2

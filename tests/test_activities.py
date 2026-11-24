@@ -1,4 +1,6 @@
 import unittest
+from collections import deque
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import activities
@@ -122,3 +124,107 @@ class GreetingTests(unittest.TestCase):
         m.start_fall()
         m.update_cursor(True, 50)
         self.assertEqual(m.activities.greeting.remaining, 0)
+
+
+class SleepTests(unittest.TestCase):
+    def test_sleep_follows_session_inactivity_not_a_stationary_pointer(self):
+        m = mascot(place="floor")
+        with patch.object(overlay.plat, "idle_seconds", return_value=.2) as idle:
+            for i in range(1500):
+                m.update_sleep(True, i/20)
+            self.assertEqual(m.mode, "walk")
+            self.assertEqual(idle.call_count, 150)
+            idle.return_value = activities.SLEEP_AFTER_SECONDS - .01
+            m.update_sleep(True, 75)
+            self.assertEqual(m.mode, "walk")
+            idle.return_value = activities.SLEEP_AFTER_SECONDS
+            m.update_sleep(True, 75.5)
+        self.assertEqual((m.mode, m.pick()), ("yawn", ("floor_drowsy", 0)))
+        modes, poses = [], set()
+        for _ in range(230):
+            if not modes or modes[-1] != m.mode:
+                modes.append(m.mode)
+            pose, drop = m.pick()
+            poses.add(pose)
+            self.assertEqual(drop, 0)
+            m.step()
+        self.assertEqual(modes, ["yawn", "doze", "sleep"])
+        self.assertTrue({"floor_yawning", "floor_nod", "floor_droop",
+                         "floor_breathe_in", "floor_breathe_out"} <= poses)
+        with patch.object(overlay.plat, "idle_seconds", return_value=0):
+            m.update_sleep(True, 87)
+        self.assertEqual((m.mode, m.pick()[0]), ("wake", "floor_rub_in"))
+        for _ in range(34):
+            m.step()
+        self.assertEqual((m.mode, m.on), ("idle", "floor"))
+
+    def test_hidden_windows_active_games_and_missing_input_data(self):
+        m = mascot()
+        with patch.object(overlay.plat, "idle_seconds", return_value=None) as idle:
+            m.update_sleep(False, 1)
+            m.start_game(seated=True)
+            m.update_sleep(True, 2)
+            idle.assert_not_called()
+            m.mode = "perch"
+            m.update_sleep(True, 3)
+            self.assertEqual(m.mode, "perch")
+            idle.return_value = 100
+            m.start_fall()
+            m.update_sleep(True, 4)
+            idle.assert_called_once()
+            self.assertEqual(m.mode, "fall")
+
+    def test_ledge_sleep_keeps_contact_and_remembers_a_pinned_seat(self):
+        m = mascot(direction=-1)
+        with patch.object(overlay.plat, "idle_seconds", return_value=90):
+            m.update_sleep(True, 1)
+        offsets = []
+        for _ in range(12):
+            offsets.append(m.pick()[1])
+            m.step()
+        self.assertEqual((offsets[0], offsets[-1]), (0, overlay.LEG))
+        self.assertEqual(offsets, sorted(offsets))
+        m.mode, m.st["sit"] = "sit", True
+        m.remember_sit()
+        with patch.object(overlay.plat, "idle_seconds", return_value=90):
+            m.update_sleep(True, 2)
+        self.assertEqual(m.pick(), ("edge_drowsy_left", overlay.LEG))
+        m.world, m.prompt = (0, 0, 640, 650, 650), (160, 450, 550, 630)
+        for _ in range(125):
+            m.step()
+        self.assertEqual((m.mode, m.X, m.Y), ("sleep", 320, -200))
+        with patch.object(overlay.plat, "idle_seconds", return_value=0):
+            m.update_sleep(True, 10)
+        for _ in range(34):
+            m.step()
+        self.assertEqual((m.mode, m.X, m.st["sit"]), ("sit", 320, True))
+        with patch.object(overlay.plat, "idle_seconds", return_value=100):
+            m.update_sleep(True, 110)
+        m.prompt = None
+        m.step()
+        self.assertEqual((m.mode, m.on), ("fall", None))
+
+    def test_picking_up_a_sleeper_rubs_eyes_and_still_allows_an_immediate_drop(self):
+        for hold_ticks in (0, 12, 32):
+            with self.subTest(hold_ticks=hold_ticks):
+                m = mascot(direction=-1)
+                m.mode, m.timer, m.base = "sleep", 10, 100
+                m.trail = deque()
+                pointer = [m.X, m.Y-25]
+                m.pointer_world = lambda: tuple(pointer)
+                event = SimpleNamespace(x=m.cw//2, y=m.base-25, state=0)
+                with patch.object(overlay.time, "monotonic", return_value=100):
+                    m.on_press(event)
+                self.assertEqual((m.mode, m.pick()[0]), ("held", "held_rub_in_left"))
+                pointer[:] = [m.X+30, m.Y-75]
+                with patch.object(overlay.time, "monotonic", return_value=100.1):
+                    m.on_drag(event)
+                    for _ in range(hold_ticks):
+                        m.step()
+                    self.assertEqual((m.X, m.Y), (280, -180))
+                    self.assertEqual(m.pick()[0].startswith("held_rub"), hold_ticks < activities.RUB_TICKS)
+                    with patch.object(m, "refresh_prompt"), patch.object(overlay.plat, "refocus"):
+                        m.on_release(event)
+                self.assertEqual((m.mode, m.on, m.activities.held_rub), ("fall", None, 0))
+                self.assertGreater(m.vx, 0)
+                self.assertLess(m.vy, 0)

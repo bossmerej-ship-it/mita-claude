@@ -34,6 +34,23 @@ class MONITORINFO(ctypes.Structure):
     _fields_ = [("cbSize", wt.DWORD), ("rcMonitor", wt.RECT), ("rcWork", wt.RECT), ("dwFlags", wt.DWORD)]
 
 
+class LASTINPUTINFO(ctypes.Structure):
+    _fields_ = [("cbSize", wt.UINT), ("dwTime", wt.DWORD)]
+
+
+user32.GetLastInputInfo.argtypes = [ctypes.POINTER(LASTINPUTINFO)]
+ctypes.windll.kernel32.GetTickCount.restype = wt.DWORD
+
+
+def idle_seconds():
+    info = LASTINPUTINFO()
+    info.cbSize = ctypes.sizeof(info)
+    if user32.GetLastInputInfo(ctypes.byref(info)):
+        elapsed = (ctypes.windll.kernel32.GetTickCount() - info.dwTime) & 0xffffffff
+        return elapsed / 1000
+    return None
+
+
 def _title(hwnd):
     n = user32.GetWindowTextLengthW(hwnd)
     buf = ctypes.create_unicode_buffer(n + 1)

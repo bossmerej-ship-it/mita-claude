@@ -21,6 +21,7 @@ class PromptSeatTests(unittest.TestCase):
         self.addCleanup(state_patch.stop)
         for patcher in (patch.object(overlay, "USE_LEDGE", False),
                         patch.object(overlay.plat, "refocus"),
+                        patch.object(overlay.plat, "idle_seconds", return_value=0),
                         patch.object(overlay.plat, "prompt_rect", return_value=None),
                         patch.object(overlay, "log")):
             patcher.start()

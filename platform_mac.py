@@ -7,6 +7,7 @@
 Координаты Quartz и Tk на маке одинаковые: точки, начало в левом верхнем углу главного экрана.
 """
 
+import math
 import os
 
 import Quartz
@@ -26,6 +27,15 @@ _ACTIVATE_IGNORING_OTHERS = 1 << 1
 
 
 _ns = []      # NSWindow нашего окна Tk
+
+
+def idle_seconds():
+    try:
+        elapsed = Quartz.CGEventSourceSecondsSinceLastEventType(
+            Quartz.kCGEventSourceStateCombinedSessionState, Quartz.kCGAnyInputEventType)
+        return elapsed if math.isfinite(elapsed) and elapsed >= 0 else None
+    except (AttributeError, TypeError, ValueError, OverflowError):
+        return None
 
 
 def setup_window(root):
