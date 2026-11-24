@@ -5,7 +5,8 @@
 
   ЛКМ (зажать и тащить)   взять её на руки. Отпустишь, и она упадёт.
                           Если резко дёрнуть, она полетит, как брошенная.
-  Ctrl + отпустить ЛКМ    «вот тут рамка поля ввода»: запоминает уступ, по которому она гуляет.
+  Shift + отпустить ЛКМ   посадить на край поля ввода здесь и запомнить место.
+                          На Windows также можно использовать Ctrl.
   ПКМ                     «сиди!»: она садится (на уступе свешивает ножки) и остаётся на месте,
                           даже если её перенести. Ещё раз ПКМ, и она снова живёт сама.
   Shift + ПКМ             закрыть маскота.
@@ -56,7 +57,7 @@ GRAVITY = 0.7         # ускорение падения
 MAX_FALL = 26         # предельная скорость падения
 HARD_LANDING = 13     # быстрее этого — падает плашмя и потом встаёт
 LEDGE_HALF = 380      # полуширина уступа (рамки поля ввода)
-USE_LEDGE = False     # True — гуляет ещё и по рамке поля ввода и крыше окна; False — только по низу окна
+USE_LEDGE = False     # True — добавить уступ по умолчанию и крышу; заданный мышкой уступ работает всегда
 LEG = 14 * SCALE      # насколько свешиваются ножки, когда сидит на уступе
 
 # Сцена после сильного падения: (кадр, сколько тиков держать). "dazed" — лежит со звёздочками.
@@ -86,6 +87,8 @@ def load_state():
             st["ledges"]["Claude"] = {"dx": saved["home"][0], "dy": saved["home"][1]}
     except Exception:
         pass
+    if not isinstance(st.get("ledges"), dict):
+        st["ledges"] = {}
     if not isinstance(st.get("sitpos"), dict):
         st["sitpos"] = {}
     return st
@@ -143,16 +146,36 @@ class Mascot:
     def platforms(self):
         l, t, r, b, wb = self.world
         w = r - l
-        ledge = self.st["ledges"].get(self.target[1], DEFAULT_LEDGE)
-        cx = w / 2 + ledge["dx"]
         floor_y = min(b, wb) - b
-        if not USE_LEDGE:
-            return {"floor": (floor_y, 0, w)}
-        return {
-            "floor": (floor_y, 0, w),
-            "ledge": (-ledge["dy"], max(0, cx - LEDGE_HALF), min(w, cx + LEDGE_HALF)),
-            "roof": (t - b, 0, w),
-        }
+        plats = {"floor": (floor_y, 0, w)}
+        ledge = self.st["ledges"].get(self.target[1])
+        if ledge is not None or USE_LEDGE:
+            ledge = ledge if ledge is not None else DEFAULT_LEDGE
+            cx = min(w, max(0, w / 2 + ledge["dx"]))
+            # При уменьшении окна уступ остаётся между верхом окна и полом.
+            y = min(floor_y - LEG, max(t - b, -ledge["dy"]))
+            plats["ledge"] = (y, max(0, cx - LEDGE_HALF), min(w, cx + LEDGE_HALF))
+        if USE_LEDGE:
+            plats["roof"] = (t - b, 0, w)
+        return plats
+
+    def remember_sit(self):
+        if self.on == "ledge":
+            w = self.world[2] - self.world[0]
+            self.st["sitpos"][self.target[1]] = {"dx": self.X - w / 2, "on": "ledge"}
+        else:
+            self.st["sitpos"][self.target[1]] = [self.X, self.Y]
+
+    def sit_on_ledge(self):
+        """Пользователь показывает край поля ввода: ноги свешиваются ниже этого края."""
+        w = self.world[2] - self.world[0]
+        self.st["ledges"][self.target[1]] = {"dx": round(self.X - w / 2), "dy": round(-self.Y)}
+        self.st["sit"] = True
+        self.mode, self.on = "sit", "ledge"
+        self.vx = self.vy = 0
+        self.remember_sit()
+        self.step()
+        self.save()
 
     # ---------- мышка ----------
     def pointer_world(self):
@@ -180,15 +203,12 @@ class Mascot:
             return
         self.held = False
         plat.refocus(self.target[0])                 # фокус остаётся у Claude/ChatGPT
-        if USE_LEDGE and e.state & 0x0004:           # Ctrl: здесь рамка поля ввода
-            w = self.world[2] - self.world[0]
-            self.st["ledges"][self.target[1]] = {"dx": round(self.X - w / 2), "dy": round(-self.Y)}
-            self.land("ledge", 0)
-            self.save()
+        if e.state & 0x0001 or (sys.platform != "darwin" and e.state & 0x0004):
+            self.sit_on_ledge()                     # Shift (или Ctrl на Windows): сесть на край
             return
         if self.st["sit"]:                           # сказали сидеть — остаётся, где отпустили
-            self.st["sitpos"][self.target[1]] = [self.X, self.Y]
             self.mode, self.on = "sit", self.platform_under_feet()
+            self.remember_sit()
             self.save()
             return
         if len(self.trail) >= 2:                     # бросок: скорость последних движений мышки
@@ -207,8 +227,9 @@ class Mascot:
         plat.refocus(self.target[0])
         self.st["sit"] = not self.st["sit"]
         if self.st["sit"]:
-            self.st["sitpos"][self.target[1]] = [self.X, self.Y]
+            self.on = self.platform_under_feet()
             self.mode = "sit"
+            self.remember_sit()
         else:
             self.st["sitpos"] = {}
             if self.on:
@@ -282,7 +303,19 @@ class Mascot:
         if self.edge_cooldown > 0:
             self.edge_cooldown -= 1
 
-        if self.mode in ("held", "sit"):
+        if self.mode == "held":
+            return
+        if self.mode == "sit":
+            w = self.world[2] - self.world[0]
+            if self.on in plats:
+                self.Y, x1, x2 = plats[self.on]
+                spot = self.st["sitpos"].get(self.target[1])
+                if self.on == "ledge" and isinstance(spot, dict):
+                    self.X = w / 2 + spot["dx"]
+            else:
+                x1, x2 = 0, w
+            margin = min(self.cw / 2, (x2 - x1) / 2)
+            self.X = min(x2 - margin, max(x1 + margin, self.X))
             return
 
         if self.mode == "fall":
@@ -413,9 +446,11 @@ class Mascot:
     def _tick(self):
         self.frame += 1
         claude, name = plat.find_target(self.target if self.target[0] else None, target_name)
-        if name != self.target[1] and claude is not None:
-            self.target = (claude, name)            # перебралась в другое окно
-            log(f"окно: {name} {plat.window_rect(claude)}")
+        if claude is not None:
+            if name != self.target[1]:
+                self.placed, self.held = False, False
+                log(f"окно: {name} {plat.window_rect(claude)}")
+            self.target = (claude, name)            # обновляем и при смене окна того же приложения
         if self.frame == 150 and self.target[1] is None:
             log(f"за 5 секунд не нашла окно из {TARGETS}. Сейчас на экране: {plat.describe()}")
             self.placed, self.held = False, False
@@ -429,7 +464,12 @@ class Mascot:
         if not self.placed:                              # первый кадр: на уступ или туда, где сидела
             self.placed = True
             spot = self.st["sitpos"].get(self.target[1])
-            if self.st["sit"] and spot:
+            if (self.st["sit"] and isinstance(spot, dict)
+                    and spot.get("on") == "ledge" and "ledge" in self.platforms()):
+                self.mode, self.on = "sit", "ledge"
+                self.X = (r - l) / 2 + spot["dx"]
+                self.Y = self.platforms()["ledge"][0]
+            elif self.st["sit"] and isinstance(spot, list) and len(spot) == 2:
                 self.X, self.Y = spot
                 self.mode, self.on = "sit", self.platform_under_feet()
             else:
