@@ -446,9 +446,11 @@ class Mascot:
     def _tick(self):
         self.frame += 1
         claude, name = plat.find_target(self.target if self.target[0] else None, target_name)
-        if name != self.target[1] and claude is not None:
-            self.target = (claude, name)            # перебралась в другое окно
-            log(f"окно: {name} {plat.window_rect(claude)}")
+        if claude is not None:
+            if name != self.target[1]:
+                self.placed, self.held = False, False
+                log(f"окно: {name} {plat.window_rect(claude)}")
+            self.target = (claude, name)            # обновляем и при смене окна того же приложения
         if self.frame == 150 and self.target[1] is None:
             log(f"за 5 секунд не нашла окно из {TARGETS}. Сейчас на экране: {plat.describe()}")
             self.placed, self.held = False, False

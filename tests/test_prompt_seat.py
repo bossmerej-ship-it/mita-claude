@@ -105,6 +105,21 @@ class PromptSeatTests(unittest.TestCase):
         self.assertEqual((self.m.X, self.m.Y), (650, -150))
         self.assertEqual((self.m.mode, self.m.on), ("sit", "ledge"))
 
+    def test_switching_apps_restores_each_apps_own_seat(self):
+        self.seat()
+        self.m.target = (303, "Claude")
+        self.m.X, self.m.Y, self.m.held = 300, -220, True
+        self.seat()
+        self.tick_in("Codex")
+        self.assertEqual((self.m.X, self.m.Y), (650, -150))
+        self.tick_in("Claude", handle=303)
+        self.assertEqual((self.m.X, self.m.Y), (300, -220))
+
+    def test_switching_windows_in_same_app_updates_native_handle(self):
+        self.seat()
+        self.tick_in("Codex", handle=202)
+        self.assertEqual(self.m.target, (202, "Codex"))
+
     def test_right_click_resumes_walking_and_can_sit_on_edge_again(self):
         self.seat()
         self.m.on_right(SimpleNamespace(state=0))
