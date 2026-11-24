@@ -1,6 +1,8 @@
+import threading
+import time
 import unittest
 
-from prompt_detection import choose_prompt
+from prompt_detection import PromptDetector, choose_prompt
 
 
 class PromptGeometryTests(unittest.TestCase):
@@ -41,6 +43,33 @@ class PromptGeometryTests(unittest.TestCase):
         self.assertEqual(choose_prompt([
             {"rect": (200, 700, 1000, 800)},
         ], self.window), (200, 700, 1000, 800))
+
+    def test_cached_surface_follows_window_and_expires(self):
+        detector = PromptDetector(lambda _: (None, None))
+        detector.last_key, detector.last_request = 1, time.monotonic()
+        detector.result = (1, (-400, -170, 400, -40), time.monotonic())
+        self.assertEqual(detector.get(1, 1, (100, 100, 1500, 1100)), (400, 930, 1200, 1060))
+        detector.result = (1, (-400, -170, 400, -40), time.monotonic()-2)
+        self.assertIsNone(detector.get(1, 1, self.window))
+
+    def test_blocked_accessibility_does_not_block_animation(self):
+        entered, release = threading.Event(), threading.Event()
+
+        def read(_):
+            entered.set()
+            release.wait(timeout=1)
+            return None, None
+
+        detector = PromptDetector(read)
+        try:
+            start = time.monotonic()
+            self.assertIsNone(detector.get(1, 1, self.window))
+            self.assertLess(time.monotonic()-start, .2)
+            self.assertTrue(entered.wait(timeout=1))
+            self.assertIsNone(detector.get(2, 2, self.window))
+        finally:
+            release.set()
+
 
 if __name__ == "__main__":
     unittest.main()

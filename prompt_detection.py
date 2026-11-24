@@ -1,6 +1,8 @@
 """Locate a composer using accessibility geometry, without reading its text."""
 
 import math
+import threading
+import time
 
 
 def rectangle(value):
@@ -50,3 +52,57 @@ def choose_prompt(candidates, window):
         score = (int(known), b, r - l)
         choices.append((score, surface))
     return max(choices, default=(None, None), key=lambda item: item[0])[1]
+
+
+class PromptDetector:
+    """Poll off the Tk thread and expire stale surfaces when a composer closes."""
+
+    def __init__(self, read, interval=.5, lifetime=1.5):
+        self.read = read
+        self.interval, self.lifetime = interval, lifetime
+        self.lock = threading.Lock()
+        self.wake = threading.Event()
+        self.pending = None
+        self.result = None
+        self.last_key, self.last_request = None, -math.inf
+        self.thread = None
+
+    def get(self, key, target, window):
+        now = time.monotonic()
+        with self.lock:
+            if key != self.last_key or now - self.last_request >= self.interval:
+                self.pending = (key, target)
+                self.last_key, self.last_request = key, now
+                self.wake.set()
+                if self.thread is None:
+                    self.thread = threading.Thread(target=self._run, daemon=True)
+                    self.thread.start()
+            result = self.result
+        if result is None or result[0] != key or now - result[2] > self.lifetime or result[1] is None:
+            return None
+        # Anchor to the center/bottom until the next scan, including while moving.
+        l, t, r, b = window
+        dx1, dy1, dx2, dy2 = result[1]
+        return ((l + r) / 2 + dx1, b + dy1, (l + r) / 2 + dx2, b + dy2)
+
+    def _run(self):
+        while True:
+            self.wake.wait()
+            with self.lock:
+                job, self.pending = self.pending, None
+                self.wake.clear()
+            if job is None:
+                continue
+            key, target = job
+            relative = None
+            try:
+                surface, window = self.read(target)
+                if rectangle(surface) and rectangle(window):
+                    l, t, r, b = window
+                    x1, y1, x2, y2 = surface
+                    relative = (x1 - (l+r)/2, y1 - b, x2 - (l+r)/2, y2 - b)
+            except Exception:
+                # Inaccessible or closing applications are not fatal to animation.
+                pass
+            with self.lock:
+                self.result = (key, relative, time.monotonic())
