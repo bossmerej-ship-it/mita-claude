@@ -1,9 +1,9 @@
 #!/bin/bash
 # Запускает Миту на macOS. Двойной клик по этому файлу (или: bash start_mac.command).
 cd "$(dirname "$0")"
-if ! python3 -c "import Quartz, AppKit" 2>/dev/null; then
+if ! python3 -c "import Quartz, AppKit, ApplicationServices" 2>/dev/null; then
   echo "Ставлю pyobjc (один раз, бесплатно)..."
-  python3 -m pip install --user pyobjc-framework-Quartz pyobjc-framework-Cocoa || exit 1
+  python3 -m pip install --user pyobjc-framework-Quartz pyobjc-framework-Cocoa pyobjc-framework-ApplicationServices || exit 1
 fi
 if ! python3 -c "import tkinter" 2>/dev/null; then
   echo "В этом Python нет tkinter. Поставь Python с python.org (или: brew install python-tk)."
