@@ -195,5 +195,14 @@ class PromptSeatTests(unittest.TestCase):
         self.m.step()
         self.assertEqual(self.m.mode, "fall")
 
+    def test_picking_up_previously_pinned_mascot_enables_plain_drop(self):
+        self.seat()
+        with patch.object(self.m, "pointer_world", return_value=(650, -250)):
+            self.m.on_press(SimpleNamespace(x=self.m.cw//2, y=self.m.base))
+        self.assertFalse(self.m.st["sit"])
+        self.drop_above_prompt()
+        self.assertEqual(self.m.mode, "fall")
+
+
 if __name__ == "__main__":
     unittest.main()

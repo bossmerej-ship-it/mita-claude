@@ -200,6 +200,11 @@ class Mascot:
         if self.world is None:
             return
         self.held = True
+        # Подняли даже закреплённую Миту: после отпускания снова действует физика.
+        if self.st["sit"]:
+            self.st["sit"] = False
+            self.st["sitpos"].pop(self.target[1], None)
+            self.save()
         self.on = None
         self.mode = "held"
         self.grab = (e.x - self.cw // 2, e.y - self.base)
@@ -220,11 +225,6 @@ class Mascot:
         plat.refocus(self.target[0])                 # фокус остаётся у Claude/ChatGPT
         if e.state & 0x0001 or (sys.platform != "darwin" and e.state & 0x0004):
             self.sit_on_ledge()                     # Shift (или Ctrl на Windows): сесть на край
-            return
-        if self.st["sit"]:                           # сказали сидеть — остаётся, где отпустили
-            self.mode, self.on = "sit", self.platform_under_feet()
-            self.remember_sit()
-            self.save()
             return
         if len(self.trail) >= 2:                     # бросок: скорость последних движений мышки
             (x0, y0), (x1, y1) = self.trail[0], self.trail[-1]
