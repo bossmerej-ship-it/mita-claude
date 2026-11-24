@@ -3,6 +3,7 @@ import unittest
 from unittest.mock import patch
 
 import mascot_overlay as overlay
+import rise_motion as rise
 import walk_motion as walk
 
 
@@ -96,19 +97,88 @@ class WalkMotionTests(unittest.TestCase):
         self.assertGreater(m.X, 507.5)
 
     def test_leaving_seat_brings_feet_up_before_facing_the_first_step(self):
-        for direction, angle in ((1, "front34_left"), (-1, "front34")):
+        for direction, swing in ((1, 1), (-1, 0)):
             m = walking_mita(direction)
-            m.mode, m.timer = "perch", 10
+            m.frame = 0 if swing == 1 else 24
+            m.mode, m.timer = "perch", rise.EDGE_TICKS + .5
+            m.step(.5)
             poses = []
-            for _ in range(10):
+            for _ in range(len(rise.EDGE[swing]) * 2):
+                if m.mode != "edge_rise":
+                    break
                 poses.append(m.pick())
-                m.step()
+                self.assertEqual((m.X, m.Y), (500.25, -130))
+                m.frame += .5
+                m.step(.5)
             drops = [drop for _, drop in poses]
             self.assertEqual(drops, sorted(drops, reverse=True))
             self.assertEqual((drops[0], drops[-1]), (overlay.LEG, 0))
-            self.assertIn(("front", 0), poses)
-            self.assertEqual(poses[-1], (angle, 0))
+            self.assertLessEqual(max(a - b for a, b in zip(drops, drops[1:])), 2)
+            suffix = "_left" if direction < 0 else ""
+            self.assertEqual(list(dict.fromkeys(name for name, _ in poses)),
+                             [name + suffix for name in rise.EDGE[swing]])
             self.assertEqual((m.mode, m.X), ("walk", 500.25))
+
+    def test_narrowing_ledge_reverses_the_rise_and_removing_it_releases_mita(self):
+        m = walking_mita()
+        m.start_edge_rise()
+        for _ in range(7):
+            m.step()
+        m.prompt = (495, 590, 525, 713)
+        drops = []
+        for _ in range(12):
+            m.step()
+            drops.append(m.pick()[1])
+        self.assertEqual((m.mode, m.X, m.Y), ("perch", 510, -160))
+        self.assertEqual(drops, sorted(drops))
+        m.prompt = (300, 610, 770, 730)
+        for _ in range(31):
+            m.step()
+        self.assertEqual(m.mode, "edge_rise")
+        m.prompt = None
+        m.step(.5)
+        self.assertEqual((m.mode, m.on), ("fall", None))
+
+    def test_drawn_rise_matches_its_endpoints_and_keeps_the_supporting_shoe_planted(self):
+        try:
+            root = tk.Tk()
+        except tk.TclError as exc:
+            self.skipTest(str(exc))
+        root.withdraw()
+        self.addCleanup(root.destroy)
+
+        def pixels(im):
+            return root.tk.call(im, "data", "-background", "#00ff00", "-format", "ppm")
+
+        def on_canvas(im, scale):
+            w, h = (n * scale for n in rise.CELL)
+            padded = tk.PhotoImage(master=root, width=w, height=h)
+            root.tk.call(padded, "copy", im, "-to", (w - im.width()) // 2, h - im.height())
+            return pixels(padded)
+
+        for scale in (1, 2):
+            images = overlay.motion.load_poses(root, overlay.SPRITES / "motion" / "get_up.png",
+                                               scale, cell=rise.CELL, rows=rise.POSE_ROWS)
+            walks = overlay.motion.load_poses(root, overlay.SPRITES / "motion" / "walk.png",
+                                              scale, cell=walk.CELL, rows=walk.POSE_ROWS)
+            for suffix in ("", "_left"):
+                for swing in (0, 1):
+                    seat = tk.PhotoImage(master=root, file=str(overlay.SPRITES / f"sit{swing}{suffix}.png"))
+                    self.assertEqual(pixels(images[rise.EDGE[swing][0] + suffix]),
+                                     on_canvas(seat.zoom(scale), scale))
+                self.assertEqual(pixels(images[rise.PIVOT[-1] + suffix]),
+                                 on_canvas(walks[walk.FIRST_STEP[0] + suffix], scale))
+                front = tk.PhotoImage(master=root, file=str(overlay.SPRITES / f"front{suffix}.png"))
+                for pose in (rise.GROUND[-1], rise.WAKE[-1]):
+                    self.assertEqual(pixels(images[pose + suffix]), on_canvas(front.zoom(scale), scale))
+                sole = None
+                for name in rise.GROUND[rise.GROUND.index("straighten00"):]:
+                    im = images[name + suffix]
+                    y = im.height() - 1
+                    contact = {x for x in range(im.width()) if not im.transparency_get(x, y)
+                               and min(im.get(x, y)) < 110}
+                    sole = contact if sole is None else sole & contact
+                self.assertGreaterEqual(len(sole), 2 * scale)
 
     def test_planted_shoe_stays_on_same_screen_pixels_in_both_half_cycles(self):
         try:

@@ -65,8 +65,48 @@ class FallMotionTests(unittest.TestCase):
                 self.assertEqual(name.endswith("_left"), direction == -1)
                 sequence.append(name[:-5] if name.endswith("_left") else name)
             self.assertEqual((m.mode, m.on, m.Y), ("idle", "floor", 0))
-            for pose in ("release2", "fall_panic", "lean2", "fall_dive", "crash_impact", "kneel", "recover"):
+            for pose in ("release2", "fall_panic", "lean2", "fall_dive", "crash_impact"):
                 self.assertIn(pose, sequence)
+            poses = list(dict.fromkeys(pose for pose in sequence if pose in overlay.rise.GROUND))
+            self.assertEqual(poses, list(overlay.rise.GROUND))
+
+    def test_same_recovery_pose_after_equal_time_with_uneven_frames(self):
+        steady, uneven = falling_mita(), falling_mita()
+        for m in (steady, uneven):
+            m.air_pose = 2
+            m.land("floor", overlay.HARD_LANDING + 1)
+        for _ in range(32):
+            for dt in (.5,) * 8:
+                steady.step(dt)
+            for dt in (1.75, .25, 2):
+                uneven.step(dt)
+            self.assertEqual((steady.mode, steady.pick(), steady.X, steady.Y),
+                             (uneven.mode, uneven.pick(), uneven.X, uneven.Y))
+
+    def test_hard_ledge_landing_sits_back_and_a_disappearing_ledge_interrupts_recovery(self):
+        for interrupt in ("get_up", "sit_back", None):
+            m = falling_mita(x=450, prompt=(200, 640, 800, 820))
+            m.air_pose = 2
+            m.land("ledge", overlay.HARD_LANDING + 1)
+            drops = []
+            for _ in range(330):
+                if m.mode == interrupt:
+                    m.prompt = None
+                    m.auto_prompt_apps.add("Codex")
+                    m.step(.5)
+                    break
+                if m.mode == "sit_back":
+                    drops.append(m.pick()[1])
+                    self.assertEqual((m.X, m.Y), (450, -260))
+                if m.mode == "perch":
+                    break
+                m.step(.5)
+            if interrupt:
+                self.assertEqual((m.mode, m.on), ("fall", None))
+            else:
+                self.assertEqual((m.mode, m.on), ("perch", "ledge"))
+                self.assertEqual((drops[0], drops[-1]), (0, overlay.LEG))
+                self.assertEqual(drops, sorted(drops))
 
     def test_fast_downward_flick_close_to_floor_folds_before_impact(self):
         m = falling_mita(y=-3, vx=-5, vy=22)

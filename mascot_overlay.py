@@ -33,6 +33,7 @@ from pathlib import Path
 
 import activities
 import fall_motion as motion
+import rise_motion as rise
 import walk_motion as walk
 
 if sys.platform == "darwin":
@@ -68,14 +69,6 @@ HARD_LANDING = 13     # быстрее этого — падает плашмя 
 LEDGE_HALF = 380      # полуширина уступа (рамки поля ввода)
 USE_LEDGE = False     # True — добавить уступ по умолчанию и крышу; заданный мышкой уступ работает всегда
 LEG = 14 * SCALE      # насколько свешиваются ножки, когда сидит на уступе
-
-# Касание руками, удар, пауза со звёздочками, подъём с колен.
-CRASH = [("contact1", 1), ("contact2", 1.5), ("crash_impact", 3), ("crash_tears", 9),
-         ("dazed1", 12), ("dazed2", 7), ("dazed1", 12), ("dazed2", 7),
-         ("lift1", 2), ("lift2", 2), ("dazed3", 7), ("situp", 6),
-         ("situp1", 2), ("situp2", 2), ("knees", 7), ("kneel", 5),
-         ("rise1", 2), ("rise2", 2), ("rise3", 2), ("dustoff", 10),
-         ("stand1", 2), ("stand2", 2), ("recover", 7), ("shy", 10)]
 
 # Уступ по умолчанию: dx — от центра окна, dy — от низа окна вверх. Для каждого окна свой.
 DEFAULT_LEDGE = {"dx": 0, "dy": 128}
@@ -131,6 +124,8 @@ class Mascot:
                                           cell=activities.CELL, rows=activities.GREET_ROWS))
         self.img.update(motion.load_poses(self.root, SPRITES / "motion" / "sleep.png", SCALE,
                                           cell=activities.CELL, rows=activities.REST_ROWS))
+        self.img.update(motion.load_poses(self.root, SPRITES / "motion" / "get_up.png", SCALE,
+                                          cell=rise.CELL, rows=rise.POSE_ROWS))
         self.cw = max(i.width() for i in self.img.values()) + 2
         self.base = max(i.height() for i in self.img.values()) + 6   # линия ног на холсте
         self.ch = self.base + LEG + 2
@@ -226,7 +221,7 @@ class Mascot:
     def update_cursor(self, visible, dt):
         greeting = self.activities.greeting
         if (not visible or self.on is None or self.mode not in activities.GREET_MODES
-                or self.mode == "perch" and self.timer <= 8
+                or self.mode == "perch" and self.timer <= rise.EDGE_TICKS
                 or self.mode == "game" and not 19 < self.timer <= self.activities.game_length - 32):
             greeting.cancel()
             return
@@ -285,7 +280,14 @@ class Mascot:
             self.remember_sit()
         else:
             self.st["sitpos"] = {}
-            if self.on:
+            if self.on and self.mode in activities.REST_MODES:
+                self.activities.rest_pinned = False
+                if self.mode != "wake":
+                    self.activities.rest_drop = self.pick()[1]
+                    self.mode, self.timer = "wake", activities.REST_PHASES["wake"][-1][0]
+            elif self.on == "ledge":
+                self.start_edge_rise()
+            elif self.on:
                 self.mode, self.timer = "idle", 20
             else:
                 self.start_fall()
@@ -353,8 +355,7 @@ class Mascot:
         self.vx = self.vy = 0
         if speed > HARD_LANDING:
             self.mode = "tip" if self.air_pose < 1.95 else "crash"
-            self.crash_i = 0
-            self.timer = CRASH[0][1]
+            self.timer = motion.IMPACT_TICKS
         else:
             self.mode, self.timer = "land", 7        # присела от приземления
 
@@ -384,6 +385,13 @@ class Mascot:
     def start_turn(self):
         self.dir *= -1
         self.mode, self.timer = "turn", walk.TURN_TICKS
+
+    def seat_swing(self):
+        return 0 if (self.frame // 20) % 2 else 1
+
+    def start_edge_rise(self, remaining=rise.EDGE_TICKS, swing=None):
+        self.rise_swing = self.seat_swing() if swing is None else swing
+        self.mode, self.timer = "edge_rise", remaining
 
     def start_game(self, seated=False):
         if not seated:
@@ -425,7 +433,7 @@ class Mascot:
         elif self.activities.rest_pinned:
             self.mode, self.timer = "sit", 0
         elif self.on == "ledge":
-            self.mode, self.timer = "perch", 8
+            self.start_edge_rise(rise.EDGE_TICKS + self.timer, swing=0)
         else:
             self.mode, self.timer = "idle", 20
 
@@ -509,7 +517,7 @@ class Mascot:
         if self.on == "ledge":
             margin = min(self.cw / 2, (x2 - x1) / 2)
             x1, x2 = x1 + margin, x2 - margin
-        if self.on == "ledge" or self.mode == "walk" or resting:
+        if self.on == "ledge" or self.mode in ("walk", "crash", "get_up") or resting:
             self.X = min(x2, max(x1, self.X))
         if resting:
             self.step_rest(dt)
@@ -518,10 +526,12 @@ class Mascot:
             return  # стопы остаются на опоре, таймер игры продолжится после приветствия
         if self.on == "ledge" and self.mode in activities.FREE_MODES:
             self.activities.game_wait = max(0, self.activities.game_wait - dt)
-        if (self.on == "ledge" and self.mode in ("walk", "perch")
+        if (self.on == "ledge" and self.mode in ("walk", "perch", "edge_rise")
                 and x2 - x1 < 2 + len(walk.FIRST_STEP) * SCALE):
             # После изменения ширины поля между краями может не поместиться даже первый шаг.
-            if self.activities.game_wait <= 0:
+            if self.mode == "edge_rise" and self.timer < rise.EDGE_TICKS:
+                self.timer = min(rise.EDGE_TICKS, self.timer + dt)
+            elif self.activities.game_wait <= 0:
                 self.start_game(seated=True)
             else:
                 self.mode, self.timer = "perch", 60
@@ -534,6 +544,8 @@ class Mascot:
             return
 
         self.timer -= dt
+        if self.mode == "perch" and self.timer <= rise.EDGE_TICKS:
+            self.start_edge_rise(self.timer)
         if self.mode == "walk":
             distance = walk.travel(self.walk_age, dt, SPEED)
             self.walk_age += dt
@@ -559,19 +571,20 @@ class Mascot:
                         return
         if self.timer <= 0:
             if self.mode == "game":
-                self.mode, self.timer = "perch", 8  # убрать приставку и подняться
-            elif self.mode in ("turn", "perch"):
+                self.start_edge_rise(rise.EDGE_TICKS + self.timer, swing=1)
+            elif self.mode in ("turn", "edge_rise"):
                 self.start_walk(random.randint(60, 200))
             elif self.mode == "land" and self.on == "ledge":
                 self.mode, self.timer = "perch", 60
             elif self.mode == "crash":
-                self.crash_i += 1
-                if self.crash_i < len(CRASH):
-                    self.timer += CRASH[self.crash_i][1]
-                elif self.on == "ledge":
-                    self.mode, self.timer = "land", 3  # плавно свесить ноги после подъёма
+                self.mode, self.timer = "get_up", rise.GROUND_TICKS + self.timer
+            elif self.mode == "get_up":
+                if self.on == "ledge":
+                    self.mode, self.timer = "sit_back", rise.LIFT_TICKS + self.timer
                 else:
                     self.mode, self.timer = "idle", 40
+            elif self.mode == "sit_back":
+                self.mode, self.timer = "perch", 60 + self.timer
             else:
                 self.next_action()
 
@@ -591,18 +604,14 @@ class Mascot:
             return self.activities.game_pose(self.timer, self.dir, self.walk_pixels, SCALE, LEG)
         if m in ("held", "fall", "tip"):
             return motion.air_sprite(self.air_pose, self.air_ticks) + left, 0
+        if m == "edge_rise":
+            return rise.edge_pose(self.timer, self.dir, self.rise_swing, SCALE)
+        if m == "sit_back":
+            return rise.edge_pose(self.timer, self.dir, 1, SCALE, sitting_down=True)
         if m in ("sit", "perch"):
             if self.on == "ledge":                       # сидит на краю, болтает ножками
-                drop = LEG
-                if m == "perch":
-                    # Поднять ноги к краю, выпрямиться и повернуться в сторону первого шага.
-                    if self.timer <= 2:
-                        return ("front34_left" if self.dir > 0 else "front34"), 0
-                    if self.timer <= 4:
-                        return "front", 0
-                    drop = motion.eased_drop((self.timer - 4) / 4, LEG)
-                return ("sit0" if (f // 20) % 2 else "sit1") + left, drop
-            return "front", 0
+                return f"sit{self.seat_swing()}" + left, LEG
+            return "front" + left, 0
         if m == "land":
             age = len(motion.CUSHION) - self.timer
             name = motion.CUSHION[min(len(motion.CUSHION) - 1, max(0, int(age)))]
@@ -610,8 +619,10 @@ class Mascot:
             drop = motion.eased_drop(1 - self.timer / 3, LEG) if self.on == "ledge" else 0
             return name + left, drop
         if m == "crash":
-            name = CRASH[self.crash_i][0]
+            name = motion.impact_pose(self.timer)
             return name + left, SCALE * self.drops.get(name, 0)
+        if m == "get_up":
+            return rise.floor_pose(self.timer, self.dir)
         if m in ("climb_up", "climb_down"):
             return ("back_step0" if (f // 8) % 2 else "back_step1"), 0
         if m == "walk":
@@ -620,7 +631,7 @@ class Mascot:
             return walk.turn_sprite(self.timer, self.dir, self.walk_pixels, SCALE), 0
         if m == "look":
             return ("back34" + left) if self.timer > 8 else ("front34" + left), 0
-        return "front", 0
+        return "front" + left, 0
 
     def set_shown(self, on):
         # Windows: поверх всех заново каждый кадр; мак: только когда меняется (иначе крадёт фокус)
@@ -696,7 +707,9 @@ class Mascot:
             self.set_shown(True)
         else:
             self.set_shown(False)
-        period = MOTION_FRAME_MS if self.mode in ("held", "fall", "land", "tip", "crash", "walk", "turn") else TICK_MS
+        moving = self.mode in ("held", "fall", "land", "tip", "crash", "get_up", "edge_rise",
+                               "sit_back", "wake", "walk", "turn")
+        period = MOTION_FRAME_MS if moving else TICK_MS
         spent_ms = (time.monotonic() - now) * 1000
         self.root.after(max(1, round(period - spent_ms)), self.tick)
 

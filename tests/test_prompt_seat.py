@@ -135,7 +135,7 @@ class PromptSeatTests(unittest.TestCase):
         self.seat()
         self.m.on_right(SimpleNamespace(state=0))
         self.assertFalse(self.m.st["sit"])
-        self.assertEqual(self.m.mode, "idle")
+        self.assertEqual((self.m.mode, self.m.pick()[1]), ("edge_rise", overlay.LEG))
         self.assertIn("ledge", self.m.platforms())
         self.m.on_right(SimpleNamespace(state=0))
         self.assertEqual((self.m.mode, self.m.on), ("sit", "ledge"))

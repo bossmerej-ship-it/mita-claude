@@ -48,9 +48,14 @@ class ConsoleTests(unittest.TestCase):
             self.assertEqual(distinct[start:start+4], list(activities.UNPACK))
             self.assertTrue(set(activities.PLAY) <= set(poses))
             self.assertEqual(distinct[-5:], [*reversed(activities.UNPACK), "sit1"])
-            for _ in range(9):
-                m.step()
+            self.assertEqual(m.mode, "edge_rise")
+            for _ in range(2 * int(overlay.rise.EDGE_TICKS) + 4):
+                if m.mode == "walk":
+                    break
+                self.assertEqual((m.mode, m.X), ("edge_rise", corner))
+                m.step(.5)
             self.assertEqual(m.mode, "walk")
+            m.step()
             self.assertLess((m.X - corner) * direction, 0)
 
     def test_prompt_resizing_and_closing_during_a_game(self):
@@ -154,8 +159,11 @@ class SleepTests(unittest.TestCase):
         with patch.object(overlay.plat, "idle_seconds", return_value=0):
             m.update_sleep(True, 87)
         self.assertEqual((m.mode, m.pick()[0]), ("wake", "floor_rub_in"))
-        for _ in range(34):
-            m.step()
+        poses = set()
+        for _ in range(68):
+            poses.add(m.pick()[0])
+            m.step(.5)
+        self.assertTrue(set(overlay.rise.WAKE) <= poses)
         self.assertEqual((m.mode, m.on), ("idle", "floor"))
 
     def test_hidden_windows_active_games_and_missing_input_data(self):

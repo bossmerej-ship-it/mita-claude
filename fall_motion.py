@@ -2,6 +2,8 @@
 
 import math
 import tkinter as tk
+from bisect import bisect_right
+from itertools import accumulate
 
 
 # Ячейки атласа нарисованы в исходном разрешении, по центру нижней границы.
@@ -11,15 +13,20 @@ POSE_ROWS = (
     ("lean1", "lean2", "lean3", "lean4"),
     ("flutter1", "flutter2", "contact1", "contact2"),
     ("cushion1", "cushion2", "cushion3"),
-    ("lift1", "lift2"),
-    ("situp1", "situp2"),
-    ("rise1", "rise2", "rise3"),
-    ("stand1", "stand2"),
 )
 AIR = ("held", *POSE_ROWS[0], "fall_panic", *POSE_ROWS[1], "fall_dive")
 FLUTTER = ("fall_panic", "flutter1", "flutter2", "flutter1")
 CUSHION = ("cushion1", "cushion3", "squash", "cushion3", "cushion2", "cushion1", "front")
 DRAG_WINDOW = 0.11  # секунды
+IMPACT = (("contact1", 1), ("contact2", 1.5), ("crash_impact", 3), ("crash_tears", 9),
+          ("dazed1", 12), ("dazed2", 7), ("dazed1", 12), ("dazed2", 7))
+IMPACT_ENDS = tuple(accumulate(ticks for _, ticks in IMPACT))
+IMPACT_TICKS = IMPACT_ENDS[-1]
+
+
+def impact_pose(remaining):
+    i = min(len(IMPACT) - 1, bisect_right(IMPACT_ENDS, IMPACT_TICKS - remaining))
+    return IMPACT[i][0]
 
 
 def load_poses(root, path, scale, *, cell=CELL, rows=POSE_ROWS):

@@ -3,6 +3,7 @@
 import random
 
 import fall_motion
+import rise_motion
 import walk_motion
 
 
@@ -34,6 +35,8 @@ RUB_TICKS = 28
 
 
 def rest_pose(mode, timer, direction, on_ledge, initial_drop, leg):
+    if mode == "wake" and not on_ledge and timer <= rise_motion.WAKE_TICKS:
+        return rise_motion.floor_pose(timer, direction, waking=True)
     if mode == "sleep":
         name = "breathe_in" if int(timer / 24) % 2 == 0 else "breathe_out"
         drop = leg
