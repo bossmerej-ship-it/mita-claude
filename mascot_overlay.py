@@ -5,7 +5,8 @@
 
   ЛКМ (зажать и тащить)   взять её на руки. Отпустишь, и она упадёт.
                           Если резко дёрнуть, она полетит, как брошенная.
-  Ctrl + отпустить ЛКМ    «вот тут рамка поля ввода»: запоминает уступ, по которому она гуляет.
+  Shift + отпустить ЛКМ   посадить на край поля ввода здесь и запомнить место.
+                          На Windows также можно использовать Ctrl.
   ПКМ                     «сиди!»: она садится (на уступе свешивает ножки) и остаётся на месте,
                           даже если её перенести. Ещё раз ПКМ, и она снова живёт сама.
   Shift + ПКМ             закрыть маскота.
@@ -158,6 +159,24 @@ class Mascot:
             plats["roof"] = (t - b, 0, w)
         return plats
 
+    def remember_sit(self):
+        if self.on == "ledge":
+            w = self.world[2] - self.world[0]
+            self.st["sitpos"][self.target[1]] = {"dx": self.X - w / 2, "on": "ledge"}
+        else:
+            self.st["sitpos"][self.target[1]] = [self.X, self.Y]
+
+    def sit_on_ledge(self):
+        """Пользователь показывает край поля ввода: ноги свешиваются ниже этого края."""
+        w = self.world[2] - self.world[0]
+        self.st["ledges"][self.target[1]] = {"dx": round(self.X - w / 2), "dy": round(-self.Y)}
+        self.st["sit"] = True
+        self.mode, self.on = "sit", "ledge"
+        self.vx = self.vy = 0
+        self.remember_sit()
+        self.step()
+        self.save()
+
     # ---------- мышка ----------
     def pointer_world(self):
         l, t, r, b, wb = self.world
@@ -184,15 +203,12 @@ class Mascot:
             return
         self.held = False
         plat.refocus(self.target[0])                 # фокус остаётся у Claude/ChatGPT
-        if USE_LEDGE and e.state & 0x0004:           # Ctrl: здесь рамка поля ввода
-            w = self.world[2] - self.world[0]
-            self.st["ledges"][self.target[1]] = {"dx": round(self.X - w / 2), "dy": round(-self.Y)}
-            self.land("ledge", 0)
-            self.save()
+        if e.state & 0x0001 or (sys.platform != "darwin" and e.state & 0x0004):
+            self.sit_on_ledge()                     # Shift (или Ctrl на Windows): сесть на край
             return
         if self.st["sit"]:                           # сказали сидеть — остаётся, где отпустили
-            self.st["sitpos"][self.target[1]] = [self.X, self.Y]
             self.mode, self.on = "sit", self.platform_under_feet()
+            self.remember_sit()
             self.save()
             return
         if len(self.trail) >= 2:                     # бросок: скорость последних движений мышки
@@ -211,8 +227,9 @@ class Mascot:
         plat.refocus(self.target[0])
         self.st["sit"] = not self.st["sit"]
         if self.st["sit"]:
-            self.st["sitpos"][self.target[1]] = [self.X, self.Y]
+            self.on = self.platform_under_feet()
             self.mode = "sit"
+            self.remember_sit()
         else:
             self.st["sitpos"] = {}
             if self.on:
@@ -433,7 +450,12 @@ class Mascot:
         if not self.placed:                              # первый кадр: на уступ или туда, где сидела
             self.placed = True
             spot = self.st["sitpos"].get(self.target[1])
-            if self.st["sit"] and spot:
+            if (self.st["sit"] and isinstance(spot, dict)
+                    and spot.get("on") == "ledge" and "ledge" in self.platforms()):
+                self.mode, self.on = "sit", "ledge"
+                self.X = (r - l) / 2 + spot["dx"]
+                self.Y = self.platforms()["ledge"][0]
+            elif self.st["sit"] and isinstance(spot, list) and len(spot) == 2:
                 self.X, self.Y = spot
                 self.mode, self.on = "sit", self.platform_under_feet()
             else:
