@@ -155,6 +155,7 @@ class Mascot:
         self.placed = False
         self.target = (None, None)   # (окно, "Claude"/"Codex")
         self.shown = None            # видна ли сейчас (меняем только при изменении)
+        self.last_tick = time.monotonic()
         self.root.after(TICK_MS, self.tick)
 
     # ---------- мир ----------
@@ -508,14 +509,19 @@ class Mascot:
             self.root.after(500, self.tick)
 
     def _tick(self):
-        self.frame += 1
+        now = time.monotonic()
+        # Не догоняем пропущенные секунды одним рывком при пробуждении компьютера.
+        dt = min(2.0, (now - self.last_tick) / TICK_SECONDS)
+        self.last_tick = now
+        previous_frame = self.frame
+        self.frame += dt
         claude, name = plat.find_target(self.target if self.target[0] else None, target_name)
         if claude is not None:
             if name != self.target[1]:
                 self.placed, self.held = False, False
                 log(f"окно: {name} {plat.window_rect(claude)}")
             self.target = (claude, name)            # обновляем и при смене окна того же приложения
-        if self.frame == 150 and self.target[1] is None:
+        if previous_frame < 150 <= self.frame and self.target[1] is None:
             log(f"за 5 секунд не нашла окно из {TARGETS}. Сейчас на экране: {plat.describe()}")
             self.placed, self.held = False, False
         if claude is None or plat.is_minimized(claude):
@@ -541,13 +547,12 @@ class Mascot:
                 plats = self.platforms()
                 py, x1, x2 = plats.get("ledge", plats["floor"])
                 self.X, self.Y = (x1 + x2) / 2, py - 120
-                self.mode = "fall"
+                self.start_fall()
 
-        self.step()
+        self.step(dt)
         name, drop = self.pick()
         self.canvas.itemconfig(self.sprite, image=self.img.get(name, self.img["front"]))
-        shake = (1 if self.frame % 2 else -1) if self.mode == "crash" and self.crash_i == 0 else 0
-        self.canvas.coords(self.sprite, self.cw // 2 + shake, self.base + drop)
+        self.canvas.coords(self.sprite, self.cw // 2, self.base + drop)
         bob = 1 if self.mode == "idle" and (self.frame // 25) % 2 else 0
 
         if self.held or self.mode == "fall" or plat.is_foreground(claude, self.own):
@@ -557,7 +562,9 @@ class Mascot:
             self.set_shown(True)
         else:
             self.set_shown(False)
-        self.root.after(TICK_MS, self.tick)
+        period = MOTION_FRAME_MS if self.mode in ("held", "fall", "land", "tip", "crash") else TICK_MS
+        spent_ms = (time.monotonic() - now) * 1000
+        self.root.after(max(1, round(period - spent_ms)), self.tick)
 
 
 if __name__ == "__main__":
