@@ -32,6 +32,7 @@ from collections import deque
 from pathlib import Path
 
 import fall_motion as motion
+import walk_motion as walk
 
 if sys.platform == "darwin":
     import platform_mac as plat       # macOS: Quartz + pyobjc
@@ -57,7 +58,7 @@ SCALE = 1             # только целое число: 1 = 41x86, 2 = 82x17
 TARGETS = ("Claude", "Codex", "ChatGPT")
 TICK_MS = 33          # базовый такт для скоростей и длительностей
 TICK_SECONDS = TICK_MS / 1000
-MOTION_FRAME_MS = 16  # чаще рисуем движение мышью, полёт и приземление
+MOTION_FRAME_MS = 16  # интервал между кадрами движения, мс
 SPEED = 1.2           # ходьба, пикселей за базовый такт
 CLIMB = 1.0           # лазанье, пикселей за базовый такт
 GRAVITY = 0.7         # ускорение падения
@@ -121,6 +122,8 @@ class Mascot:
             im = tk.PhotoImage(file=str(f))
             self.img[f.stem] = im.zoom(SCALE, SCALE) if SCALE > 1 else im
         self.img.update(motion.load_poses(self.root, SPRITES / "motion" / "fall.png", SCALE))
+        self.img.update(motion.load_poses(self.root, SPRITES / "motion" / "walk.png", SCALE,
+                                          cell=walk.CELL, rows=walk.POSE_ROWS))
         self.cw = max(i.width() for i in self.img.values()) + 2
         self.base = max(i.height() for i in self.img.values()) + 6   # линия ног на холсте
         self.ch = self.base + LEG + 2
@@ -145,6 +148,8 @@ class Mascot:
         self.mode = "fall"
         self.timer = 0
         self.frame = 0
+        self.walk_pixels = 0
+        self.walk_age = 0.0
         self.edge_cooldown = 0
         self.held = False
         self.trail = deque()      # время и координаты последних движений мыши
@@ -335,7 +340,7 @@ class Mascot:
             return
         r = random.random()
         if r < 0.6:
-            self.mode, self.timer = "walk", random.randint(60, 220)
+            self.start_walk(random.randint(60, 220))
             if random.random() < 0.3:
                 self.start_turn()
         elif r < 0.85:
@@ -343,17 +348,22 @@ class Mascot:
         else:
             self.mode, self.timer = "look", random.randint(30, 60)
 
+    def start_walk(self, duration):
+        if self.mode != "walk":
+            self.walk_pixels = 0
+            self.walk_age = 0.0
+        self.mode, self.timer = "walk", duration
+
     def start_turn(self):
         self.dir *= -1
-        self.mode, self.timer = "turn", 12
+        self.mode, self.timer = "turn", walk.TURN_TICKS
 
-    def at_edge(self, name, x1, x2):
+    def at_edge(self, name):
         """Дошла до края уступа: развернуться, слезть или спрыгнуть."""
         plats = self.platforms()
         floor_y = plats["floor"][0]
         r = random.random()
         if name == "floor" or self.edge_cooldown > 0:
-            self.X = min(max(self.X, x1 + 1), x2 - 1)
             self.start_turn()
         elif name == "ledge" and r < 0.3 and floor_y - plats["ledge"][0] > 20:
             self.mode = "climb_down"
@@ -361,7 +371,6 @@ class Mascot:
         elif r < 0.45:
             self.start_fall(self.dir * 2.5, -5)        # спрыгнула
         else:
-            self.X = min(max(self.X, x1 + 1), x2 - 1)
             self.start_turn()
         self.edge_cooldown = 90
 
@@ -422,7 +431,13 @@ class Mascot:
         if self.on == "ledge":
             margin = min(self.cw / 2, (x2 - x1) / 2)
             x1, x2 = x1 + margin, x2 - margin
+        if self.on == "ledge" or self.mode == "walk":
             self.X = min(x2, max(x1, self.X))
+        if (self.on == "ledge" and self.mode in ("walk", "perch")
+                and x2 - x1 < 2 + len(walk.FIRST_STEP) * SCALE):
+            # После изменения ширины поля между краями может не поместиться даже первый шаг.
+            self.mode, self.timer = "perch", 60
+            return
 
         if self.mode == "tip":
             self.air_pose = min(2.0, self.air_pose + .5 * dt)
@@ -432,15 +447,23 @@ class Mascot:
 
         self.timer -= dt
         if self.mode == "walk":
-            self.X += SPEED * self.dir * dt
-            if self.X <= x1 or self.X >= x2:
-                self.at_edge(self.on, x1, x2)
+            distance = walk.travel(self.walk_age, dt, SPEED)
+            self.walk_age += dt
+            # Считаем путь по тем же целым координатам, по которым перемещается окно Tk.
+            previous_x = round(self.X)
+            inset = min(1, (x2 - x1) / 2)
+            limit = x2 - inset if self.dir > 0 else x1 + inset
+            x = self.X + self.dir * distance
+            self.X = min(x, limit) if self.dir > 0 else max(x, limit)
+            self.walk_pixels += max(0, (round(self.X) - previous_x) * self.dir)
+            if self.X == limit:
+                self.at_edge(self.on)
                 return
             # на полу у края уступа: может залезть наверх
             if self.on == "floor" and self.edge_cooldown == 0 and "ledge" in plats:
                 lp, lx1, lx2 = plats["ledge"]
                 for edge in (lx1, lx2):
-                    if abs(self.X - edge) < SPEED * dt and py - lp > 20 and random.random() < 0.5:
+                    if abs(self.X - edge) < distance and py - lp > 20 and random.random() < 0.5:
                         self.X = edge
                         self.mode, self.on = "climb_up", None
                         self.dir = 1 if edge == lx1 else -1
@@ -448,7 +471,7 @@ class Mascot:
                         return
         if self.timer <= 0:
             if self.mode in ("turn", "perch"):
-                self.mode, self.timer = "walk", random.randint(60, 200)
+                self.start_walk(random.randint(60, 200))
             elif self.mode == "land" and self.on == "ledge":
                 self.mode, self.timer = "perch", 60
             elif self.mode == "crash":
@@ -471,7 +494,14 @@ class Mascot:
             return motion.air_sprite(self.air_pose, self.air_ticks) + left, 0
         if m in ("sit", "perch"):
             if self.on == "ledge":                       # сидит на краю, болтает ножками
-                drop = motion.eased_drop(self.timer / 4, LEG) if m == "perch" else LEG
+                drop = LEG
+                if m == "perch":
+                    # Поднять ноги к краю, выпрямиться и повернуться в сторону первого шага.
+                    if self.timer <= 2:
+                        return ("front34_left" if self.dir > 0 else "front34"), 0
+                    if self.timer <= 4:
+                        return "front", 0
+                    drop = motion.eased_drop((self.timer - 4) / 4, LEG)
                 return ("sit0" if (f // 20) % 2 else "sit1") + left, drop
             return "front", 0
         if m == "land":
@@ -486,9 +516,9 @@ class Mascot:
         if m in ("climb_up", "climb_down"):
             return ("back_step0" if (f // 8) % 2 else "back_step1"), 0
         if m == "walk":
-            return {0: "side_step0", 1: "side", 2: "side_step1", 3: "side"}[(f // 6) % 4] + left, 0
+            return walk.sprite(self.walk_pixels, SCALE, self.dir), 0
         if m == "turn":
-            return ("front34" + left) if self.timer > 6 else "front", 0
+            return walk.turn_sprite(self.timer, self.dir, self.walk_pixels, SCALE), 0
         if m == "look":
             return ("back34" + left) if self.timer > 8 else ("front34" + left), 0
         return "front", 0
@@ -562,7 +592,7 @@ class Mascot:
             self.set_shown(True)
         else:
             self.set_shown(False)
-        period = MOTION_FRAME_MS if self.mode in ("held", "fall", "land", "tip", "crash") else TICK_MS
+        period = MOTION_FRAME_MS if self.mode in ("held", "fall", "land", "tip", "crash", "walk", "turn") else TICK_MS
         spent_ms = (time.monotonic() - now) * 1000
         self.root.after(max(1, round(period - spent_ms)), self.tick)
 
