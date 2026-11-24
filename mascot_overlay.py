@@ -494,7 +494,14 @@ class Mascot:
             return motion.air_sprite(self.air_pose, self.air_ticks) + left, 0
         if m in ("sit", "perch"):
             if self.on == "ledge":                       # сидит на краю, болтает ножками
-                drop = motion.eased_drop(self.timer / 4, LEG) if m == "perch" else LEG
+                drop = LEG
+                if m == "perch":
+                    # Поднять ноги к краю, выпрямиться и повернуться в сторону первого шага.
+                    if self.timer <= 2:
+                        return ("front34_left" if self.dir > 0 else "front34"), 0
+                    if self.timer <= 4:
+                        return "front", 0
+                    drop = motion.eased_drop((self.timer - 4) / 4, LEG)
                 return ("sit0" if (f // 20) % 2 else "sit1") + left, drop
             return "front", 0
         if m == "land":

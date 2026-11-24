@@ -94,5 +94,20 @@ class WalkMotionTests(unittest.TestCase):
         self.assertEqual(m.mode, "walk")
         self.assertGreater(m.X, 507.5)
 
+    def test_leaving_seat_brings_feet_up_before_facing_the_first_step(self):
+        for direction, angle in ((1, "front34_left"), (-1, "front34")):
+            m = walking_mita(direction)
+            m.mode, m.timer = "perch", 10
+            poses = []
+            for _ in range(10):
+                poses.append(m.pick())
+                m.step()
+            drops = [drop for _, drop in poses]
+            self.assertEqual(drops, sorted(drops, reverse=True))
+            self.assertEqual((drops[0], drops[-1]), (overlay.LEG, 0))
+            self.assertIn(("front", 0), poses)
+            self.assertEqual(poses[-1], (angle, 0))
+            self.assertEqual((m.mode, m.X), ("walk", 500.25))
+
 if __name__ == "__main__":
     unittest.main()
