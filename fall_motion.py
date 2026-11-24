@@ -34,3 +34,28 @@ def load_poses(root, path, scale):
             poses[name] = image
             poses[name + "_left"] = image.subsample(-1, 1)
     return poses
+
+
+def record_drag(samples, now, point):
+    samples.append((now, *point))
+    # Оставляем одну точку до границы интервала для интерполяции.
+    while len(samples) > 2 and samples[1][0] <= now - DRAG_WINDOW:
+        samples.popleft()
+
+
+def throw_velocity(samples, now, tick_seconds):
+    """Скорость в пикселях за обычный такт, независимо от частоты событий мыши."""
+    if len(samples) < 2 or now - samples[-1][0] >= DRAG_WINDOW:
+        return 0.0, 0.0
+    start = max(samples[0][0], now - DRAG_WINDOW)
+    t0, x0, y0 = samples[0]
+    for t1, x1, y1 in samples:
+        if t1 > start:
+            fraction = (start - t0) / (t1 - t0)
+            x0 += (x1 - x0) * fraction
+            y0 += (y1 - y0) * fraction
+            break
+        t0, x0, y0 = t1, x1, y1
+    _, x, y = samples[-1]
+    factor = tick_seconds / max(now - start, .016)
+    return max(-22, min(22, (x - x0) * factor)), max(-22, min(22, (y - y0) * factor))
