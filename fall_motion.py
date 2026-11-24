@@ -1,5 +1,6 @@
 """Позы и движение Миты между отпусканием мыши и приземлением."""
 
+import math
 import tkinter as tk
 
 
@@ -59,3 +60,29 @@ def throw_velocity(samples, now, tick_seconds):
     _, x, y = samples[-1]
     factor = tick_seconds / max(now - start, .016)
     return max(-22, min(22, (x - x0) * factor)), max(-22, min(22, (y - y0) * factor))
+
+
+def fall_travel(speed, ticks, gravity, terminal):
+    """Точно интегрируем ускорение, в том числе при достижении предельной скорости."""
+    speed = min(speed, terminal)
+    accelerating = min(ticks, (terminal - speed) / gravity) if gravity > 0 else ticks
+    end_speed = speed + gravity * accelerating
+    distance = (speed + end_speed) * .5 * accelerating + end_speed * (ticks - accelerating)
+    return distance, end_speed
+
+
+def crossing_time(gap, speed, gravity, terminal):
+    """Момент, когда ноги пересекут горизонталь сверху вниз (не на взлёте)."""
+    speed = min(speed, terminal)
+    if gravity <= 0:
+        return gap / speed if gap >= 0 and speed > 0 else math.inf
+    squared = speed * speed + 2 * gravity * gap
+    if squared < 0:
+        return math.inf
+    impact = math.sqrt(squared)
+    if impact <= terminal:
+        ticks = (impact - speed) / gravity
+    else:
+        accelerating = (terminal - speed) / gravity
+        ticks = accelerating + (gap - (speed + terminal) * .5 * accelerating) / terminal
+    return ticks if ticks >= 0 else math.inf
