@@ -14,6 +14,7 @@ def walking_mita(direction=1, surface="ledge"):
     m.mode, m.on, m.dir = "idle", surface, direction
     m.X, m.Y, m.cw = 500.25, m.platforms()[surface][0], 81
     m.frame, m.edge_cooldown = 0, 200
+    m.activities = overlay.activities.Activities()
     m.start_walk(1000)
     return m
 

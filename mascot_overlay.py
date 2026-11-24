@@ -31,6 +31,7 @@ import tkinter as tk
 from collections import deque
 from pathlib import Path
 
+import activities
 import fall_motion as motion
 import walk_motion as walk
 
@@ -124,6 +125,8 @@ class Mascot:
         self.img.update(motion.load_poses(self.root, SPRITES / "motion" / "fall.png", SCALE))
         self.img.update(motion.load_poses(self.root, SPRITES / "motion" / "walk.png", SCALE,
                                           cell=walk.CELL, rows=walk.POSE_ROWS))
+        self.img.update(motion.load_poses(self.root, SPRITES / "motion" / "console.png", SCALE,
+                                          cell=activities.CELL, rows=activities.GAME_ROWS))
         self.cw = max(i.width() for i in self.img.values()) + 2
         self.base = max(i.height() for i in self.img.values()) + 6   # линия ног на холсте
         self.ch = self.base + LEG + 2
@@ -150,6 +153,7 @@ class Mascot:
         self.frame = 0
         self.walk_pixels = 0
         self.walk_age = 0.0
+        self.activities = activities.Activities()
         self.edge_cooldown = 0
         self.held = False
         self.trail = deque()      # время и координаты последних движений мыши
@@ -335,6 +339,9 @@ class Mascot:
             self.mode, self.timer = "land", 7        # присела от приземления
 
     def next_action(self):
+        if self.on == "ledge" and self.activities.game_wait <= 0:
+            self.start_walk(180)  # дойти до уголка, даже если обычная прогулка короче
+            return
         if self.on == "ledge" and random.random() < 0.3:
             self.mode, self.timer = "perch", random.randint(60, 140)
             return
@@ -358,8 +365,16 @@ class Mascot:
         self.dir *= -1
         self.mode, self.timer = "turn", walk.TURN_TICKS
 
+    def start_game(self, seated=False):
+        if not seated:
+            self.dir *= -1  # после игры пойдёт от края обратно
+        self.mode, self.timer = "game", self.activities.begin_game(seated)
+
     def at_edge(self, name):
         """Дошла до края уступа: развернуться, слезть или спрыгнуть."""
+        if name == "ledge" and self.activities.game_wait <= 0:
+            self.start_game()
+            return
         plats = self.platforms()
         floor_y = plats["floor"][0]
         r = random.random()
@@ -431,12 +446,17 @@ class Mascot:
         if self.on == "ledge":
             margin = min(self.cw / 2, (x2 - x1) / 2)
             x1, x2 = x1 + margin, x2 - margin
+            if self.mode in activities.FREE_MODES:
+                self.activities.game_wait = max(0, self.activities.game_wait - dt)
         if self.on == "ledge" or self.mode == "walk":
             self.X = min(x2, max(x1, self.X))
         if (self.on == "ledge" and self.mode in ("walk", "perch")
                 and x2 - x1 < 2 + len(walk.FIRST_STEP) * SCALE):
             # После изменения ширины поля между краями может не поместиться даже первый шаг.
-            self.mode, self.timer = "perch", 60
+            if self.activities.game_wait <= 0:
+                self.start_game(seated=True)
+            else:
+                self.mode, self.timer = "perch", 60
             return
 
         if self.mode == "tip":
@@ -470,7 +490,9 @@ class Mascot:
                         self.edge_cooldown = 90
                         return
         if self.timer <= 0:
-            if self.mode in ("turn", "perch"):
+            if self.mode == "game":
+                self.mode, self.timer = "perch", 8  # убрать приставку и подняться
+            elif self.mode in ("turn", "perch"):
                 self.start_walk(random.randint(60, 200))
             elif self.mode == "land" and self.on == "ledge":
                 self.mode, self.timer = "perch", 60
@@ -490,6 +512,8 @@ class Mascot:
         f = self.frame
         left = "_left" if self.dir < 0 else ""
         m = self.mode
+        if m == "game":
+            return self.activities.game_pose(self.timer, self.dir, self.walk_pixels, SCALE, LEG)
         if m in ("held", "fall", "tip"):
             return motion.air_sprite(self.air_pose, self.air_ticks) + left, 0
         if m in ("sit", "perch"):

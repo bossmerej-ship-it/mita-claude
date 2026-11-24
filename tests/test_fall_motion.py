@@ -14,6 +14,7 @@ def falling_mita(x=200, y=-450, vx=0, vy=0, prompt=None):
     m.X, m.Y, m.dir = x, y, 1
     m.frame, m.edge_cooldown, m.cw = 0, 0, 81
     m.drops = {}
+    m.activities = overlay.activities.Activities()
     m.start_fall(vx, vy)
     return m
 
