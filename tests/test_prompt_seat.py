@@ -81,6 +81,21 @@ class PromptSeatTests(unittest.TestCase):
         self.assertEqual(self.m.mode, "fall")
         self.assertNotIn("ledge", self.m.platforms())
 
+    def test_seat_follows_center_and_bottom_when_window_moves_and_resizes(self):
+        self.seat()
+        self.m.world = (300, 200, 1500, 1200, 1200)
+        self.m.step()
+        self.assertEqual((self.m.X, self.m.Y), (750, -150))
+
+    def test_seat_is_clamped_but_recovers_after_window_widens(self):
+        self.seat()
+        self.m.world = (0, 0, 200, 300, 300)
+        self.m.step()
+        self.assertEqual(self.m.X, 200 - self.m.cw / 2)
+        self.m.world = (0, 0, 1000, 800, 800)
+        self.m.step()
+        self.assertEqual(self.m.X, 650)
+
     def test_restart_restores_seated_pose_and_saved_edge(self):
         self.seat()
         self.m.st = overlay.load_state()

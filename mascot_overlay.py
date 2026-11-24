@@ -303,7 +303,19 @@ class Mascot:
         if self.edge_cooldown > 0:
             self.edge_cooldown -= 1
 
-        if self.mode in ("held", "sit"):
+        if self.mode == "held":
+            return
+        if self.mode == "sit":
+            w = self.world[2] - self.world[0]
+            if self.on in plats:
+                self.Y, x1, x2 = plats[self.on]
+                spot = self.st["sitpos"].get(self.target[1])
+                if self.on == "ledge" and isinstance(spot, dict):
+                    self.X = w / 2 + spot["dx"]
+            else:
+                x1, x2 = 0, w
+            margin = min(self.cw / 2, (x2 - x1) / 2)
+            self.X = min(x2 - margin, max(x1 + margin, self.X))
             return
 
         if self.mode == "fall":
