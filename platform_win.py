@@ -3,6 +3,11 @@
 import ctypes
 import ctypes.wintypes as wt
 
+from prompt_detection import PromptDetector
+from prompt_windows import WindowsPromptReader
+
+_prompt_detector = PromptDetector(WindowsPromptReader())
+
 user32 = ctypes.windll.user32
 try:
     ctypes.windll.shcore.SetProcessDpiAwareness(2)  # координаты совпадают с экраном
@@ -95,3 +100,7 @@ def is_foreground(win, own):
 
 def refocus(win):
     """На Windows окно маскота и так не забирает фокус."""
+
+
+def prompt_rect(win, bounds):
+    return _prompt_detector.get(win, win, bounds)
