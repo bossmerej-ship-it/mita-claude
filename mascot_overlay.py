@@ -127,6 +127,8 @@ class Mascot:
                                           cell=walk.CELL, rows=walk.POSE_ROWS))
         self.img.update(motion.load_poses(self.root, SPRITES / "motion" / "console.png", SCALE,
                                           cell=activities.CELL, rows=activities.GAME_ROWS))
+        self.img.update(motion.load_poses(self.root, SPRITES / "motion" / "greeting.png", SCALE,
+                                          cell=activities.CELL, rows=activities.GREET_ROWS))
         self.cw = max(i.width() for i in self.img.values()) + 2
         self.base = max(i.height() for i in self.img.values()) + 6   # линия ног на холсте
         self.ch = self.base + LEG + 2
@@ -219,10 +221,22 @@ class Mascot:
         l, t, r, b, wb = self.world
         return self.root.winfo_pointerx() - l, self.root.winfo_pointery() - b
 
+    def update_cursor(self, visible, dt):
+        greeting = self.activities.greeting
+        if (not visible or self.on is None or self.mode not in activities.GREET_MODES
+                or self.mode == "perch" and self.timer <= 8
+                or self.mode == "game" and not 19 < self.timer <= self.activities.game_length - 32):
+            greeting.cancel()
+            return
+        seated = self.on == "ledge" and self.mode in ("sit", "perch", "game")
+        center = (self.X, self.Y - 43 * SCALE + (LEG if seated else 0))
+        greeting.update(self.pointer_world(), center, self.dir, SCALE, dt)
+
     def on_press(self, e):
         if self.world is None:
             return
         self.held = True
+        self.activities.greeting.cancel()
         # Подняли даже закреплённую Миту: после отпускания снова действует физика.
         if self.st["sit"]:
             self.st["sit"] = False
@@ -259,6 +273,7 @@ class Mascot:
         if e.state & 0x0001:                         # Shift + ПКМ = выход
             self.root.destroy()
             return
+        self.activities.greeting.cancel()
         plat.refocus(self.target[0])
         self.st["sit"] = not self.st["sit"]
         if self.st["sit"]:
@@ -287,6 +302,7 @@ class Mascot:
 
     # ---------- поведение ----------
     def start_fall(self, vx=0.0, vy=0.0, pose=0.0):
+        self.activities.greeting.cancel()
         self.mode, self.on = "fall", None
         self.vx, self.vy = vx, vy
         self.air_pose, self.air_ticks = pose, 0.0
@@ -446,10 +462,12 @@ class Mascot:
         if self.on == "ledge":
             margin = min(self.cw / 2, (x2 - x1) / 2)
             x1, x2 = x1 + margin, x2 - margin
-            if self.mode in activities.FREE_MODES:
-                self.activities.game_wait = max(0, self.activities.game_wait - dt)
         if self.on == "ledge" or self.mode == "walk":
             self.X = min(x2, max(x1, self.X))
+        if self.activities.greeting.remaining > 0:
+            return  # стопы остаются на опоре, таймер игры продолжится после приветствия
+        if self.on == "ledge" and self.mode in activities.FREE_MODES:
+            self.activities.game_wait = max(0, self.activities.game_wait - dt)
         if (self.on == "ledge" and self.mode in ("walk", "perch")
                 and x2 - x1 < 2 + len(walk.FIRST_STEP) * SCALE):
             # После изменения ширины поля между краями может не поместиться даже первый шаг.
@@ -512,6 +530,9 @@ class Mascot:
         f = self.frame
         left = "_left" if self.dir < 0 else ""
         m = self.mode
+        if self.activities.greeting.remaining > 0:
+            seated = self.on == "ledge" and m in ("sit", "perch", "game")
+            return self.activities.greeting.pose(m, seated), LEG if seated else 0
         if m == "game":
             return self.activities.game_pose(self.timer, self.dir, self.walk_pixels, SCALE, LEG)
         if m in ("held", "fall", "tip"):
@@ -573,12 +594,14 @@ class Mascot:
         if claude is not None:
             if name != self.target[1]:
                 self.placed, self.held = False, False
+                self.activities.greeting.cancel()
                 log(f"окно: {name} {plat.window_rect(claude)}")
             self.target = (claude, name)            # обновляем и при смене окна того же приложения
         if previous_frame < 150 <= self.frame and self.target[1] is None:
             log(f"за 5 секунд не нашла окно из {TARGETS}. Сейчас на экране: {plat.describe()}")
             self.placed, self.held = False, False
         if claude is None or plat.is_minimized(claude):
+            self.activities.greeting.cancel()
             self.set_shown(False)
             self.root.after(TICK_MS, self.tick)
             return
@@ -604,12 +627,14 @@ class Mascot:
                 self.start_fall()
 
         self.step(dt)
+        visible = self.held or self.mode == "fall" or plat.is_foreground(claude, self.own)
+        self.update_cursor(visible, dt)
         name, drop = self.pick()
         self.canvas.itemconfig(self.sprite, image=self.img.get(name, self.img["front"]))
         self.canvas.coords(self.sprite, self.cw // 2, self.base + drop)
         bob = 1 if self.mode == "idle" and (self.frame // 25) % 2 else 0
 
-        if self.held or self.mode == "fall" or plat.is_foreground(claude, self.own):
+        if visible:
             wx = l + round(self.X) - self.cw // 2
             wy = b + round(self.Y) - self.base - bob
             self.root.geometry(f"+{wx}+{wy}")

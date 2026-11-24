@@ -42,6 +42,7 @@ class PromptSeatTests(unittest.TestCase):
         self.m.activities = overlay.activities.Activities()
         self.m.dir = 1
         self.m.root, self.m.canvas = Mock(), Mock()
+        self.m.root.winfo_pointerx.return_value = self.m.root.winfo_pointery.return_value = -10000
         self.m.img, self.m.sprite, self.m.own = {"front": Mock()}, 1, 999
         self.m.trail = deque()
         self.m.air_pose = self.m.air_ticks = 0.0
