@@ -51,6 +51,35 @@ class FallMotionTests(unittest.TestCase):
                 self.assertEqual((m.on, m.Y), ("ledge", -200))
                 self.assertLess(m.X, 507)
 
+    def test_hard_drop_keeps_facing_and_reaches_recovery_from_both_directions(self):
+        for direction in (1, -1):
+            m = falling_mita(x=600)
+            m.dir = direction
+            sequence = []
+            for _ in range(600):
+                m.step(.5)
+                if m.mode == "idle":
+                    break
+                name, _ = m.pick()
+                self.assertEqual(name.endswith("_left"), direction == -1)
+                sequence.append(name[:-5] if name.endswith("_left") else name)
+            self.assertEqual((m.mode, m.on, m.Y), ("idle", "floor", 0))
+            for pose in ("release2", "fall_panic", "lean2", "fall_dive", "crash_impact", "kneel", "recover"):
+                self.assertIn(pose, sequence)
+
+    def test_fast_downward_flick_close_to_floor_folds_before_impact(self):
+        m = falling_mita(y=-3, vx=-5, vy=22)
+        poses = []
+        for _ in range(24):
+            m.step(.5)
+            if m.mode == "crash":
+                break
+            self.assertEqual((m.on, m.Y), ("floor", 0))
+            poses.append(m.pick()[0])
+        self.assertGreater(len(set(poses)), 3)
+        self.assertTrue(all(pose.endswith("_left") for pose in poses))
+        self.assertEqual((m.mode, m.on, m.Y), ("crash", "floor", 0))
+
     def test_soft_ledge_landing_eases_into_sitting_with_feet_on_the_edge(self):
         m = falling_mita(x=400, y=-275, prompt=(100, 700, 800, 800))
         contact_poses, offsets = set(), []

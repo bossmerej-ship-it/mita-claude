@@ -67,9 +67,13 @@ LEDGE_HALF = 380      # полуширина уступа (рамки поля �
 USE_LEDGE = False     # True — добавить уступ по умолчанию и крышу; заданный мышкой уступ работает всегда
 LEG = 14 * SCALE      # насколько свешиваются ножки, когда сидит на уступе
 
-# Сцена после сильного падения: (кадр, сколько тиков держать). "dazed" — лежит со звёздочками.
-CRASH = [("crash_impact", 7), ("crash_tears", 10), ("dazed", 75), ("dazed3", 22), ("situp", 18),
-         ("knees", 18), ("kneel", 12), ("dustoff", 28), ("recover", 20), ("shy", 24)]
+# Касание руками, удар, пауза со звёздочками, подъём с колен.
+CRASH = [("contact1", 1), ("contact2", 1.5), ("crash_impact", 3), ("crash_tears", 9),
+         ("dazed1", 12), ("dazed2", 7), ("dazed1", 12), ("dazed2", 7),
+         ("lift1", 2), ("lift2", 2), ("dazed3", 7), ("situp", 6),
+         ("situp1", 2), ("situp2", 2), ("knees", 7), ("kneel", 5),
+         ("rise1", 2), ("rise2", 2), ("rise3", 2), ("dustoff", 10),
+         ("stand1", 2), ("stand2", 2), ("recover", 7), ("shy", 10)]
 
 # Уступ по умолчанию: dx — от центра окна, dy — от низа окна вверх. Для каждого окна свой.
 DEFAULT_LEDGE = {"dx": 0, "dy": 128}
@@ -449,10 +453,11 @@ class Mascot:
             elif self.mode == "crash":
                 self.crash_i += 1
                 if self.crash_i < len(CRASH):
-                    self.timer = CRASH[self.crash_i][1]
+                    self.timer += CRASH[self.crash_i][1]
+                elif self.on == "ledge":
+                    self.mode, self.timer = "land", 3  # плавно свесить ноги после подъёма
                 else:
-                    self.mode = "perch" if self.on == "ledge" else "idle"
-                    self.timer = 60
+                    self.mode, self.timer = "idle", 40
             else:
                 self.next_action()
 
@@ -476,8 +481,6 @@ class Mascot:
             return name + left, drop
         if m == "crash":
             name = CRASH[self.crash_i][0]
-            if name == "dazed":                          # звёздочки кружатся, иногда дёргается
-                name = "dazed1" if (f // 7) % 3 else "dazed2"
             return name + left, SCALE * self.drops.get(name, 0)
         if m in ("climb_up", "climb_down"):
             return ("back_step0" if (f // 8) % 2 else "back_step1"), 0
