@@ -86,3 +86,22 @@ def crossing_time(gap, speed, gravity, terminal):
         accelerating = (terminal - speed) / gravity
         ticks = accelerating + (gap - (speed + terminal) * .5 * accelerating) / terminal
     return ticks if ticks >= 0 else math.inf
+
+
+def approach_pose(current, goal, ticks):
+    # Переход от спокойной позы к раскрытым рукам занимает примерно 130 мс.
+    change = .26 * ticks
+    return current + max(-change, min(change, goal - current))
+
+
+def air_sprite(pose, age):
+    # 0 — отпустили, 1 — руки в стороны, 2 — наклон в направлении броска.
+    name = AIR[round(pose * (len(AIR) - 1) / 2)]
+    if name == "fall_panic":
+        return FLUTTER[int(age / 3.5) % len(FLUTTER)]
+    return name
+
+
+def eased_drop(progress, leg):
+    progress = max(0.0, min(1.0, progress))
+    return round(leg * progress * progress * (3 - 2 * progress))
