@@ -19,6 +19,7 @@ class PromptSeatTests(unittest.TestCase):
         self.addCleanup(state_patch.stop)
         for patcher in (patch.object(overlay, "USE_LEDGE", False),
                         patch.object(overlay.plat, "refocus"),
+                        patch.object(overlay.plat, "prompt_rect", return_value=None),
                         patch.object(overlay, "log")):
             patcher.start()
             self.addCleanup(patcher.stop)
@@ -26,6 +27,8 @@ class PromptSeatTests(unittest.TestCase):
         self.m = overlay.Mascot.__new__(overlay.Mascot)
         self.m.st = copy.deepcopy(overlay.DEFAULT)
         self.m.world = (100, 100, 1100, 900, 900)
+        self.m.prompt = None
+        self.m.auto_prompt_apps = set()
         self.m.target = (101, "Codex")
         self.m.X, self.m.Y = 650, -150
         self.m.vx, self.m.vy = 12, 8
@@ -140,6 +143,57 @@ class PromptSeatTests(unittest.TestCase):
         self.assertEqual((self.m.mode, self.m.on), ("sit", "floor"))
         self.assertEqual((self.m.X, self.m.Y), (240, 0))
 
+    def drop_above_prompt(self, x=650, y=-250):
+        overlay.plat.prompt_rect.return_value = (300, 700, 900, 860)
+        self.m.X, self.m.Y = x, y
+        self.seat(0)
+
+    def fall_until_landing(self):
+        for _ in range(150):
+            self.m.step()
+            if self.m.on is not None:
+                return
+        self.fail("Mascot never landed")
+
+    def test_drop_outside_prompt_width_reaches_floor(self):
+        self.drop_above_prompt(x=100)
+        self.fall_until_landing()
+        self.assertEqual(self.m.on, "floor")
+
+    def test_drop_below_prompt_does_not_teleport_onto_it(self):
+        self.drop_above_prompt(y=-190)
+        self.fall_until_landing()
+        self.assertEqual(self.m.on, "floor")
+
+    def test_high_speed_fall_cannot_pass_through_prompt(self):
+        self.drop_above_prompt(y=-210)
+        self.m.vy = overlay.MAX_FALL
+        self.m.step()
+        self.assertEqual((self.m.on, self.m.Y), ("ledge", -200))
+
+    def test_prompt_disappearing_or_closing_returns_mascot_to_physics(self):
+        self.drop_above_prompt()
+        self.fall_until_landing()
+        self.m.mode, self.m.prompt = "perch", None
+        self.m.step()
+        self.assertEqual((self.m.mode, self.m.on), ("fall", None))
+        self.fall_until_landing()
+        self.assertEqual(self.m.on, "floor")
+
+    def test_prompt_disappearing_during_climb_does_not_crash(self):
+        self.m.mode, self.m.on = "climb_up", None
+        self.m.step()
+        self.assertEqual(self.m.mode, "fall")
+
+    def test_closed_auto_prompt_does_not_fall_back_to_old_manual_edge(self):
+        self.m.st["ledges"]["Codex"] = {"dx": 0, "dy": 150}
+        self.drop_above_prompt()
+        self.fall_until_landing()
+        overlay.plat.prompt_rect.return_value = None
+        self.m.refresh_prompt()
+        self.assertNotIn("ledge", self.m.platforms())
+        self.m.step()
+        self.assertEqual(self.m.mode, "fall")
 
 if __name__ == "__main__":
     unittest.main()

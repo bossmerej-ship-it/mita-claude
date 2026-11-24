@@ -137,6 +137,8 @@ class Mascot:
         self.held = False
         self.trail = []           # последние точки мышки, чтобы посчитать бросок
         self.world = None
+        self.prompt = None        # настоящий прямоугольник поля ввода (экранные координаты)
+        self.auto_prompt_apps = set()
         self.placed = False
         self.target = (None, None)   # (окно, "Claude"/"Codex")
         self.shown = None            # видна ли сейчас (меняем только при изменении)
@@ -148,8 +150,14 @@ class Mascot:
         w = r - l
         floor_y = min(b, wb) - b
         plats = {"floor": (floor_y, 0, w)}
+        prompt = self.prompt
         ledge = self.st["ledges"].get(self.target[1])
-        if ledge is not None or USE_LEDGE:
+        if prompt is not None:
+            pl, pt, pr, pb = prompt
+            x1, x2 = max(0, pl - l), min(w, pr - l)
+            if x2 > x1 and t <= pt < min(b, wb):
+                plats["ledge"] = (pt - b, x1, x2)
+        elif (ledge is not None or USE_LEDGE) and self.target[1] not in self.auto_prompt_apps:
             ledge = ledge if ledge is not None else DEFAULT_LEDGE
             cx = min(w, max(0, w / 2 + ledge["dx"]))
             # При уменьшении окна уступ остаётся между верхом окна и полом.
@@ -170,12 +178,18 @@ class Mascot:
         """Пользователь показывает край поля ввода: ноги свешиваются ниже этого края."""
         w = self.world[2] - self.world[0]
         self.st["ledges"][self.target[1]] = {"dx": round(self.X - w / 2), "dy": round(-self.Y)}
+        self.auto_prompt_apps.discard(self.target[1])
         self.st["sit"] = True
         self.mode, self.on = "sit", "ledge"
         self.vx = self.vy = 0
         self.remember_sit()
         self.step()
         self.save()
+
+    def refresh_prompt(self):
+        self.prompt = plat.prompt_rect(self.target[0], self.world[:4])
+        if self.prompt is not None:
+            self.auto_prompt_apps.add(self.target[1])
 
     # ---------- мышка ----------
     def pointer_world(self):
@@ -202,6 +216,7 @@ class Mascot:
         if not self.held:
             return
         self.held = False
+        self.refresh_prompt()
         plat.refocus(self.target[0])                 # фокус остаётся у Claude/ChatGPT
         if e.state & 0x0001 or (sys.platform != "darwin" and e.state & 0x0004):
             self.sit_on_ledge()                     # Shift (или Ctrl на Windows): сесть на край
@@ -305,6 +320,8 @@ class Mascot:
 
         if self.mode == "held":
             return
+        if (self.on == "ledge" or self.mode in ("climb_up", "climb_down")) and "ledge" not in plats:
+            self.mode, self.on, self.vx, self.vy = "fall", None, 0, 0
         if self.mode == "sit":
             w = self.world[2] - self.world[0]
             if self.on in plats:
@@ -460,6 +477,7 @@ class Mascot:
             return
         l, t, r, b = plat.window_rect(claude)
         self.world = (l, t, r, b, plat.work_bottom(claude))
+        self.refresh_prompt()
 
         if not self.placed:                              # первый кадр: на уступ или туда, где сидела
             self.placed = True
