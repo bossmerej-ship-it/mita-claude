@@ -1,5 +1,7 @@
 """Подъём с пола и с края поля. Кадры привязаны к опоре в исходных пикселях."""
 
+import math
+
 CELL = (79, 90)
 FRAME_TICKS = .75
 
@@ -41,11 +43,10 @@ def floor_pose(remaining, direction, *, waking=False):
 
 
 def edge_pose(remaining, direction, swing, scale, *, sitting_down=False):
+    poses = EDGE[swing]
     if sitting_down:
-        poses = LIFT[swing]
-        i = len(poses) - 1 - frame_index(remaining, LIFT_TICKS, len(poses))
+        i = max(0, min(len(poses) - 1, math.ceil(remaining / FRAME_TICKS) - 1))
     else:
-        poses = EDGE[swing]
         i = frame_index(remaining, EDGE_TICKS, len(poses))
     offset = TOE_BELOW_EDGE[i] * scale if i < len(TOE_BELOW_EDGE) else 0
     return poses[i] + ("_left" if direction < 0 else ""), offset

@@ -170,6 +170,9 @@ class PromptSeatTests(unittest.TestCase):
         self.assertEqual((self.m.on, self.m.Y), ("ledge", -200))
         for _ in range(7):
             self.m.step()
+        self.assertEqual((self.m.mode, self.m.pick()[1]), ("sit_back", 0))
+        for _ in range(int(overlay.rise.LIFT_TICKS)):
+            self.m.step()
         self.assertEqual(self.m.mode, "perch")
         self.assertEqual(self.m.pick()[1], overlay.LEG)
         self.assertFalse(self.m.st["sit"])
@@ -244,9 +247,10 @@ class PromptSeatTests(unittest.TestCase):
         self.fall_until_landing()
         with patch.object(overlay.random, "random", return_value=.1):
             self.m.next_action()
+        self.assertEqual(self.m.mode, "sit_back")
+        self.m.step(self.m.timer)
         self.assertEqual(self.m.mode, "perch")
-        self.m.timer = 1
-        self.m.step()
+        self.m.step(self.m.timer)
         self.assertEqual(self.m.mode, "walk")
 
     def test_picking_up_previously_pinned_mascot_enables_plain_drop(self):

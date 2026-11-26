@@ -12,7 +12,7 @@ def falling_mita(x=200, y=-450, vx=0, vy=0, prompt=None):
     m.prompt, m.auto_prompt_apps = prompt, set()
     m.st = {"ledges": {}, "sitpos": {}, "sit": False}
     m.X, m.Y, m.dir = x, y, 1
-    m.frame, m.edge_cooldown, m.cw = 0, 0, 81
+    m.frame, m.edge_cooldown, m.cw, m.walk_pixels = 0, 0, 81, 0
     m.drops = {}
     m.activities = overlay.activities.Activities()
     m.start_fall(vx, vy)
@@ -126,7 +126,7 @@ class FallMotionTests(unittest.TestCase):
         contact_poses, offsets = set(), []
         for _ in range(100):
             m.step(.5)
-            if m.mode in ("land", "perch"):
+            if m.mode in ("land", "sit_back", "perch"):
                 self.assertEqual((m.on, m.Y), ("ledge", -200))
                 pose, drop = m.pick()
                 contact_poses.add(pose)
@@ -137,4 +137,5 @@ class FallMotionTests(unittest.TestCase):
         self.assertTrue({"squash", "cushion1", "front"} <= contact_poses)
         self.assertEqual((offsets[0], offsets[-1]), (0, overlay.LEG))
         self.assertEqual(offsets, sorted(offsets))
-        self.assertGreater(len(set(offsets)), 3)
+        self.assertGreaterEqual(len(set(offsets)), 10)
+        self.assertLessEqual(max(b - a for a, b in zip(offsets, offsets[1:])), 2)

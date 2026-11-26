@@ -118,6 +118,8 @@ class Mascot:
         self.img.update(motion.load_poses(self.root, SPRITES / "motion" / "fall.png", SCALE))
         self.img.update(motion.load_poses(self.root, SPRITES / "motion" / "walk.png", SCALE,
                                           cell=walk.CELL, rows=walk.POSE_ROWS))
+        self.img.update(motion.load_poses(self.root, SPRITES / "motion" / "plant.png", SCALE,
+                                          cell=walk.CELL, rows=walk.PLANT_ROWS))
         self.img.update(motion.load_poses(self.root, SPRITES / "motion" / "console.png", SCALE,
                                           cell=activities.CELL, rows=activities.GAME_ROWS))
         self.img.update(motion.load_poses(self.root, SPRITES / "motion" / "greeting.png", SCALE,
@@ -221,7 +223,7 @@ class Mascot:
         greeting = self.activities.greeting
         if (not visible or self.on is None or self.mode not in activities.GREET_MODES
                 or self.mode == "perch" and self.timer <= rise.EDGE_TICKS
-                or self.mode == "game" and not 19 < self.timer <= self.activities.game_length - 32):
+                or self.mode == "game" and not 19 < self.timer <= self.activities.game_length - activities.PLAY_START):
             greeting.cancel()
             return
         seated = self.on == "ledge" and self.mode in ("sit", "perch", "game")
@@ -363,7 +365,7 @@ class Mascot:
             self.start_walk(180)  # дойти до уголка, даже если обычная прогулка короче
             return
         if self.on == "ledge" and random.random() < 0.3:
-            self.mode, self.timer = "perch", random.randint(60, 140)
+            self.start_sitting(rest=random.randint(60, 140))
             return
         r = random.random()
         if r < 0.6:
@@ -387,6 +389,11 @@ class Mascot:
 
     def seat_swing(self):
         return 0 if (self.frame // 20) % 2 else 1
+
+    def start_sitting(self, rest=60, overshoot=0):
+        duration = walk.SEAT_TICKS if self.mode == "walk" else rise.LIFT_TICKS
+        self.perch_ticks = rest
+        self.mode, self.timer = "sit_back", duration + overshoot
 
     def start_edge_rise(self, remaining=rise.EDGE_TICKS, swing=None):
         self.rise_swing = self.seat_swing() if swing is None else swing
@@ -531,7 +538,9 @@ class Mascot:
             if self.mode == "edge_rise" and self.timer < rise.EDGE_TICKS:
                 self.timer = min(rise.EDGE_TICKS, self.timer + dt)
             elif self.activities.game_wait <= 0:
-                self.start_game(seated=True)
+                self.start_game(seated=self.mode != "walk")
+            elif self.mode == "walk":
+                self.start_sitting()
             else:
                 self.mode, self.timer = "perch", 60
             return
@@ -574,16 +583,16 @@ class Mascot:
             elif self.mode in ("turn", "edge_rise"):
                 self.start_walk(random.randint(60, 200))
             elif self.mode == "land" and self.on == "ledge":
-                self.mode, self.timer = "perch", 60
+                self.start_sitting(overshoot=self.timer)
             elif self.mode == "crash":
                 self.mode, self.timer = "get_up", rise.GROUND_TICKS + self.timer
             elif self.mode == "get_up":
                 if self.on == "ledge":
-                    self.mode, self.timer = "sit_back", rise.LIFT_TICKS + self.timer
+                    self.start_sitting(overshoot=self.timer)
                 else:
                     self.mode, self.timer = "idle", 40
             elif self.mode == "sit_back":
-                self.mode, self.timer = "perch", 60 + self.timer
+                self.mode, self.timer = "perch", self.perch_ticks + self.timer
             else:
                 self.next_action()
 
@@ -606,7 +615,7 @@ class Mascot:
         if m == "edge_rise":
             return rise.edge_pose(self.timer, self.dir, self.rise_swing, SCALE)
         if m == "sit_back":
-            return rise.edge_pose(self.timer, self.dir, 1, SCALE, sitting_down=True)
+            return walk.sitting_pose(self.timer, self.dir, self.walk_pixels, SCALE)
         if m in ("sit", "perch"):
             if self.on == "ledge":                       # сидит на краю, болтает ножками
                 return f"sit{self.seat_swing()}" + left, LEG
@@ -614,9 +623,7 @@ class Mascot:
         if m == "land":
             age = len(motion.CUSHION) - self.timer
             name = motion.CUSHION[min(len(motion.CUSHION) - 1, max(0, int(age)))]
-            # В конце мягкой посадки ноги постепенно свешиваются за край чата.
-            drop = motion.eased_drop(1 - self.timer / 3, LEG) if self.on == "ledge" else 0
-            return name + left, drop
+            return name + left, 0
         if m == "crash":
             name = motion.impact_pose(self.timer)
             return name + left, SCALE * self.drops.get(name, 0)
@@ -706,7 +713,8 @@ class Mascot:
             self.set_shown(False)
         moving = self.mode in ("held", "fall", "land", "tip", "crash", "get_up", "edge_rise",
                                "sit_back", "wake", "walk", "turn", "climb_up", "climb_down")
-        period = MOTION_FRAME_MS if moving else TICK_MS
+        sitting_to_play = self.mode == "game" and self.timer > self.activities.game_length - walk.SEAT_TICKS
+        period = MOTION_FRAME_MS if moving or sitting_to_play else TICK_MS
         spent_ms = (time.monotonic() - now) * 1000
         self.root.after(max(1, round(period - spent_ms)), self.tick)
 

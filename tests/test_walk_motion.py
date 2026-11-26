@@ -58,7 +58,7 @@ class WalkMotionTests(unittest.TestCase):
         self.assertGreater(m.X, 650)
         self.assertEqual(m.pick(), pose)
 
-    def test_turn_keeps_position_and_passes_through_both_three_quarter_views(self):
+    def test_turn_plants_the_current_stride_then_rotates_through_both_profiles(self):
         for incoming in (-1, 1):
             m = walking_mita(incoming)
             m.X = 145 if incoming < 0 else 855
@@ -69,7 +69,8 @@ class WalkMotionTests(unittest.TestCase):
             self.assertEqual(m.mode, "turn")
             x = m.X
             views = []
-            for _ in range(30):
+            stride = walk.stride_name(m.walk_pixels, overlay.SCALE)
+            for _ in range(60):
                 name, drop = m.pick()
                 self.assertEqual((m.X, drop), (x, 0))
                 if not views or name != views[-1]:
@@ -78,23 +79,52 @@ class WalkMotionTests(unittest.TestCase):
                 if m.mode != "turn":
                     break
             self.assertEqual(m.mode, "walk")
-            angles = ["front34", "front", "front34_left"]
-            self.assertEqual(views[1:-1], angles if incoming < 0 else angles[::-1])
-            self.assertEqual(views[-1], m.pick()[0])
+            before, after = ("_left", "") if incoming < 0 else ("", "_left")
+            expected = [stride + before]
+            expected.extend(f"plant_{stride}_{i}" + before for i in range(1, walk.PLANT_FRAMES + 1))
+            expected.extend(name + before for name in reversed(rise.PIVOT))
+            expected.extend(name + after for name in rise.PIVOT)
+            self.assertEqual(views, expected)
+            self.assertEqual(m.pick(), (walk.FIRST_STEP[0] + after, 0))
             m.step()
             self.assertGreater((m.X - x) * -incoming, 0)
 
     def test_ledge_too_narrow_for_a_step(self):
         m = walking_mita()
         m.prompt = (490, 615, 525, 720)
+        drops = []
         for _ in range(120):
             m.step()
-            self.assertEqual((m.mode, m.X, m.Y), ("perch", 507.5, -135))
+            self.assertIn(m.mode, ("sit_back", "perch"))
+            self.assertEqual((m.X, m.Y), (507.5, -135))
+            drops.append(m.pick()[1])
+        self.assertEqual((drops[0], drops[-1]), (0, overlay.LEG))
+        self.assertEqual(drops, sorted(drops))
+        self.assertEqual(m.mode, "perch")
         m.prompt = (400, 615, 650, 720)
         for _ in range(61):
             m.step()
         self.assertEqual(m.mode, "walk")
         self.assertGreater(m.X, 507.5)
+
+    def test_every_stride_has_drawn_intermediates_that_converge_on_planted_feet(self):
+        root = tk.Tk()
+        root.withdraw()
+        self.addCleanup(root.destroy)
+        images = overlay.motion.load_poses(root, overlay.SPRITES / "motion" / "walk.png", 1,
+                                          cell=walk.CELL, rows=walk.POSE_ROWS)
+        images.update(overlay.motion.load_poses(root, overlay.SPRITES / "motion" / "plant.png", 1,
+                                                cell=walk.CELL, rows=walk.PLANT_ROWS))
+
+        def pixels(name):
+            return root.tk.call(images[name], "data", "-background", "#00ff00", "-format", "ppm")
+
+        neutral = pixels(walk.FIRST_STEP[0])
+        self.assertEqual(pixels(f"plant_{walk.FIRST_STEP[0]}_1"), neutral)
+        for stride in walk.CYCLE + walk.FIRST_STEP:
+            final = pixels(f"plant_{stride}_{walk.PLANT_FRAMES}")
+            diff = sum(a != b for a, b in zip(final, neutral))
+            self.assertLessEqual(diff, sum(a != b for a, b in zip(pixels(stride), neutral)), stride)
 
     def test_leaving_seat_brings_feet_up_before_facing_the_first_step(self):
         for direction, swing in ((1, 1), (-1, 0)):

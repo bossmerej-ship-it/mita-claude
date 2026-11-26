@@ -11,6 +11,8 @@ CELL = (61, 90)
 UNPACK = ("game_reach", "game_pocket", "game_lift", "game_ready")
 PLAY = tuple(f"game_play{i}" for i in range(4))
 GAME_ROWS = (UNPACK, PLAY)
+UNPACK_TICKS = len(UNPACK) * 4
+PLAY_START = walk_motion.SEAT_TICKS + UNPACK_TICKS
 FREE_MODES = ("walk", "turn", "perch", "idle", "look")
 GREET_MODES = ("walk", "perch", "idle", "look", "sit", "game")
 GESTURES = ("notice", "raise", "wave_in", "wave_out")
@@ -114,25 +116,22 @@ class Activities:
     def begin_game(self, seated):
         self.game_length = random.randint(300, 440)
         self.game_wait = random.randint(900, 1500)
-        return self.game_length - (16 if seated else 0)
+        return self.game_length - (walk_motion.SEAT_TICKS if seated else 0)
 
     def game_pose(self, remaining, direction, walk_pixels, scale, leg):
         age = self.game_length - remaining
         left = "_left" if direction < 0 else ""
-        if age < 3:
-            return walk_motion.sprite(walk_pixels, scale, -direction), 0
-        if age < 6:
-            return ("front34_left" if direction < 0 else "front34"), 0
-        if age < 9:
-            return "front", 0
-        if age < 16:
-            return "sit1" + left, fall_motion.eased_drop((age - 9) / 7, leg)
-        if age < 32:
-            name = UNPACK[int((age - 16) / 4)]
+        if age < walk_motion.SEAT_TICKS:
+            remaining_seat = walk_motion.SEAT_TICKS - age
+            # She faces into the chat again once both feet are together, before sitting.
+            facing = -direction if remaining_seat > rise_motion.LIFT_TICKS else direction
+            return walk_motion.sitting_pose(remaining_seat, facing, walk_pixels, scale)
+        if age < PLAY_START:
+            name = UNPACK[int((age - walk_motion.SEAT_TICKS) / 4)]
         elif remaining <= 3:
             name = "sit1"
         elif remaining < 19:
             name = UNPACK[int((remaining - 3) / 4)]
         else:
-            name = PLAY[int((age - 32) / 5) % len(PLAY)]
+            name = PLAY[int((age - PLAY_START) / 5) % len(PLAY)]
         return name + left, leg
