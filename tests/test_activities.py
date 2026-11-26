@@ -61,10 +61,10 @@ class ConsoleTests(unittest.TestCase):
     def test_prompt_resizing_and_closing_during_a_game(self):
         m = mascot()
         m.start_game(seated=True)
-        m.prompt = (320, 420, 450, 590)
+        m.prompt = (220, 420, 450, 590)
         m.step()
         self.assertEqual((m.mode, m.Y), ("game", -180))
-        self.assertGreaterEqual(m.X, 320+m.cw/2)
+        self.assertEqual(m.X, 250)
         m.prompt = None
         m.step()
         self.assertEqual((m.mode, m.on), ("fall", None))

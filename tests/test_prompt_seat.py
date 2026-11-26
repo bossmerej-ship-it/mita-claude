@@ -44,10 +44,11 @@ class PromptSeatTests(unittest.TestCase):
         self.m.dir = 1
         self.m.root, self.m.present = Mock(), Mock()
         self.m.root.winfo_pointerx.return_value = self.m.root.winfo_pointery.return_value = -10000
-        self.m.img, self.m.sprite, self.m.own = {"front": Mock()}, 1, 999
+        self.m.img, self.m.own = {"front": Mock()}, 999
         self.m.trail = deque()
         self.m.air_pose = self.m.air_ticks = 0.0
         self.m.last_tick = time.monotonic()
+        self.m.placement_deadline = self.m.last_tick
 
     def seat(self, modifier=0x0001):
         self.m.on_release(SimpleNamespace(state=modifier))
@@ -151,6 +152,41 @@ class PromptSeatTests(unittest.TestCase):
         self.assertEqual((self.m.mode, self.m.on), ("sit", "floor"))
         self.assertEqual((self.m.X, self.m.Y), (240, 0))
 
+    def test_first_frame_waits_for_the_composer_then_starts_above_its_edge(self):
+        self.m.placed, self.m.held = False, False
+        self.m.target = (None, None)
+        with patch.object(overlay.plat, "prompt_ready", return_value=False):
+            self.tick_in("ChatGPT")
+            self.assertFalse(self.m.placed)
+            self.m.present.assert_not_called()
+            overlay.plat.prompt_rect.return_value = (300, 640, 900, 860)
+            self.tick_in("ChatGPT")
+        self.assertTrue(self.m.placed)
+        self.assertEqual(self.m.mode, "fall")
+        self.assertLess(self.m.Y, self.m.platforms()["ledge"][0])
+
+    def test_unavailable_composer_still_allows_starting_on_the_floor(self):
+        self.m.placed, self.m.held = False, False
+        self.m.placement_deadline = 0
+        with patch.object(overlay.plat, "prompt_ready", return_value=False):
+            self.tick_in("Codex")
+        self.assertTrue(self.m.placed)
+        self.assertEqual(self.m.mode, "fall")
+
+    def test_fall_is_hidden_when_another_application_is_in_front(self):
+        self.m.held = False
+        self.m.start_fall()
+        self.m.shown = True
+        with patch.object(overlay.plat, "find_target", return_value=self.m.target), \
+                patch.object(overlay.plat, "is_minimized", return_value=False), \
+                patch.object(overlay.plat, "window_rect", return_value=self.m.world[:4]), \
+                patch.object(overlay.plat, "work_bottom", return_value=self.m.world[4]), \
+                patch.object(overlay.plat, "is_foreground", return_value=False), \
+                patch.object(overlay.plat, "hide") as hide:
+            self.m._tick()
+        self.m.present.assert_not_called()
+        hide.assert_called_once_with(self.m.root, self.m.own)
+
     def drop_above_prompt(self, x=650, y=-250):
         overlay.plat.prompt_rect.return_value = (300, 700, 900, 860)
         self.m.X, self.m.Y = x, y
@@ -228,10 +264,10 @@ class PromptSeatTests(unittest.TestCase):
         self.drop_above_prompt()
         self.fall_until_landing()
         self.m.mode, self.m.timer = "perch", 60
-        overlay.plat.prompt_rect.return_value = (400, 600, 650, 860)
+        overlay.plat.prompt_rect.return_value = (400, 600, 850, 860)
         self.tick_in("Codex")
         self.assertEqual(self.m.Y, -300)
-        self.assertLessEqual(self.m.X, 550 - self.m.cw / 2)
+        self.assertEqual((self.m.X, self.m.on), (650, "ledge"))
 
     def test_walking_turns_at_actual_prompt_edge(self):
         self.drop_above_prompt()
@@ -240,7 +276,7 @@ class PromptSeatTests(unittest.TestCase):
         with patch.object(overlay.random, "random", return_value=.9):
             self.m.step()
         self.assertEqual(self.m.mode, "turn")
-        self.assertLess(self.m.X, 800 - self.m.cw / 2)
+        self.assertEqual(self.m.X, 800)
 
     def test_automatic_rest_is_followed_by_walking(self):
         self.drop_above_prompt()

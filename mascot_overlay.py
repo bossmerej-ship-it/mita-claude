@@ -63,6 +63,7 @@ TICK_SECONDS = TICK_MS / 1000
 MOTION_FRAME_MS = 16  # интервал между кадрами движения, мс
 SPEED = 1.2           # ходьба, пикселей за базовый такт
 CLIMB = 1.0           # лазанье, пикселей за базовый такт
+HAND_REACH = 16 * SCALE
 GRAVITY = 0.7         # ускорение падения
 MAX_FALL = 26         # предельная скорость падения
 HARD_LANDING = 13     # быстрее этого — падает плашмя и потом встаёт
@@ -165,6 +166,7 @@ class Mascot:
         self.target = (None, None)   # (окно, "Claude"/"Codex")
         self.shown = None            # видна ли сейчас (меняем только при изменении)
         self.last_tick = time.monotonic()
+        self.placement_deadline = self.last_tick
         self.root.after(TICK_MS, self.tick)
 
     # ---------- мир ----------
@@ -383,6 +385,15 @@ class Mascot:
             self.walk_age = 0.0
         self.mode, self.timer = "walk", duration
 
+    def walk_to(self, limit, dt):
+        distance = walk.travel(self.walk_age, dt, SPEED)
+        self.walk_age += dt
+        previous_x = round(self.X)
+        x = self.X + self.dir * distance
+        self.X = min(x, limit) if self.dir > 0 else max(x, limit)
+        self.walk_pixels += max(0, (round(self.X) - previous_x) * self.dir)
+        return distance
+
     def start_turn(self):
         self.dir *= -1
         self.mode, self.timer = "turn", walk.TURN_TICKS
@@ -453,9 +464,9 @@ class Mascot:
         r = random.random()
         if name == "floor" or self.edge_cooldown > 0:
             self.start_turn()
-        elif name == "ledge" and r < 0.3 and floor_y - plats["ledge"][0] > 20:
-            self.mode = "climb_down"
-            self.on = None
+        elif name == "ledge" and r < .45:
+            self.mode = "walk_off"
+            self.climbing_off = self.prompt is not None and r < .3 and floor_y - plats["ledge"][0] > 20
         elif r < 0.45:
             self.start_fall(self.dir * 2.5, -5)        # спрыгнула
         else:
@@ -496,21 +507,20 @@ class Mascot:
             self.step_fall(plats, dt)
             return
 
-        if self.mode == "climb_up":
-            self.Y -= CLIMB * dt
-            if self.Y <= plats["ledge"][0]:
-                self.on = "ledge"
-                self.Y = plats["ledge"][0]
+        if self.mode in ("climb_up", "climb_down"):
+            top, left, right = plats["ledge"]
+            upward = self.mode == "climb_up"
+            side = left if (self.dir > 0) == upward else right
+            if (self.prompt is None or abs(self.X - side) > HAND_REACH + 1
+                    or self.Y - HAND_REACH > self.prompt[3] - self.world[3] or self.Y < top - 1):
+                self.start_fall()
+                return
+            self.Y += (-CLIMB if upward else CLIMB) * dt
+            if upward and self.Y <= top:
                 self.X += 4 * self.dir
-                self.mode, self.timer = "land", 6
-            return
-
-        if self.mode == "climb_down":
-            self.Y += CLIMB * dt
-            if self.Y >= plats["floor"][0]:
-                self.on = "floor"
-                self.Y = plats["floor"][0]
-                self.mode, self.timer = "land", 6
+                self.land("ledge", 0)
+            elif not upward and self.Y >= plats["floor"][0]:
+                self.land("floor", 0)
             return
 
         # стоит на уступе: держимся на нём, даже если окно поменяло размер
@@ -518,12 +528,30 @@ class Mascot:
             self.start_fall()
             return
         py, x1, x2 = plats[self.on]
+        if self.on == "ledge" and (not x1 <= self.X <= x2 or py - self.Y > 3 * SCALE):
+            # The composer moved out from under her or shrank down after an attachment was removed.
+            self.start_fall()
+            self.step_fall(plats, dt)
+            return
         self.Y = py
 
+        if self.mode == "walk_off":
+            side = x2 if self.dir > 0 else x1
+            limit = side - self.dir * min(HAND_REACH, (x2 - x1) / 2)
+            if (limit - self.X) * self.dir > 0:
+                self.walk_to(limit, dt)
+            if (limit - self.X) * self.dir <= 0:
+                if self.climbing_off and self.prompt is not None:
+                    self.mode, self.on = "climb_down", None
+                else:
+                    self.start_fall(self.dir * 2.5, -5)
+            return
         if self.on == "ledge":
             margin = min(self.cw / 2, (x2 - x1) / 2)
             x1, x2 = x1 + margin, x2 - margin
-        if self.on == "ledge" or self.mode in ("walk", "crash", "get_up") or resting:
+            if x1 == x2:
+                self.X = x1
+        elif self.mode in ("walk", "crash", "get_up") or resting:
             self.X = min(x2, max(x1, self.X))
         if resting:
             self.step_rest(dt)
@@ -555,20 +583,18 @@ class Mascot:
         if self.mode == "perch" and self.timer <= rise.EDGE_TICKS:
             self.start_edge_rise(self.timer)
         if self.mode == "walk":
-            distance = walk.travel(self.walk_age, dt, SPEED)
-            self.walk_age += dt
-            # Считаем путь по тем же целым координатам, по которым перемещается окно Tk.
-            previous_x = round(self.X)
             inset = min(1, (x2 - x1) / 2)
             limit = x2 - inset if self.dir > 0 else x1 + inset
-            x = self.X + self.dir * distance
-            self.X = min(x, limit) if self.dir > 0 else max(x, limit)
-            self.walk_pixels += max(0, (round(self.X) - previous_x) * self.dir)
+            if (limit - self.X) * self.dir <= 0:
+                self.at_edge(self.on)
+                return
+            distance = self.walk_to(limit, dt)
             if self.X == limit:
                 self.at_edge(self.on)
                 return
             # на полу у края уступа: может залезть наверх
-            if self.on == "floor" and self.edge_cooldown == 0 and "ledge" in plats:
+            if (self.on == "floor" and self.edge_cooldown == 0 and "ledge" in plats
+                    and self.prompt is not None and self.world[3] + py - self.prompt[3] <= HAND_REACH):
                 lp, lx1, lx2 = plats["ledge"]
                 for edge in (lx1, lx2):
                     if abs(self.X - edge) < distance and py - lp > 20 and random.random() < 0.5:
@@ -631,7 +657,7 @@ class Mascot:
             return rise.floor_pose(self.timer, self.dir)
         if m in ("climb_up", "climb_down"):
             return ("back_step0" if (f // 8) % 2 else "back_step1"), 0
-        if m == "walk":
+        if m in ("walk", "walk_off"):
             return walk.sprite(self.walk_pixels, SCALE, self.dir), 0
         if m == "turn":
             return walk.turn_sprite(self.timer, self.dir, self.walk_pixels, SCALE), 0
@@ -666,6 +692,7 @@ class Mascot:
         if claude is not None:
             if name != self.target[1]:
                 self.placed, self.held = False, False
+                self.placement_deadline = now + 2
                 self.activities.greeting.cancel()
                 log(f"окно: {name} {plat.window_rect(claude)}")
             self.target = (claude, name)            # обновляем и при смене окна того же приложения
@@ -682,24 +709,30 @@ class Mascot:
         self.refresh_prompt()
 
         if not self.placed:                              # первый кадр: на уступ или туда, где сидела
+            plats = self.platforms()
+            if ("ledge" not in plats and not self.st["sit"] and now < self.placement_deadline
+                    and not plat.prompt_ready(claude)):
+                # The first UIA scan can outlast a short fall, leaving her below the composer.
+                self.set_shown(False)
+                self.root.after(TICK_MS, self.tick)
+                return
             self.placed = True
             spot = self.st["sitpos"].get(self.target[1])
             if (self.st["sit"] and isinstance(spot, dict)
-                    and spot.get("on") == "ledge" and "ledge" in self.platforms()):
+                    and spot.get("on") == "ledge" and "ledge" in plats):
                 self.mode, self.on = "sit", "ledge"
                 self.X = (r - l) / 2 + spot["dx"]
-                self.Y = self.platforms()["ledge"][0]
+                self.Y = plats["ledge"][0]
             elif self.st["sit"] and isinstance(spot, list) and len(spot) == 2:
                 self.X, self.Y = spot
                 self.mode, self.on = "sit", self.platform_under_feet()
             else:
-                plats = self.platforms()
                 py, x1, x2 = plats.get("ledge", plats["floor"])
                 self.X, self.Y = (x1 + x2) / 2, py - 120
                 self.start_fall()
 
         self.step(dt)
-        visible = self.held or self.mode == "fall" or plat.is_foreground(claude, self.own)
+        visible = self.held or plat.is_foreground(claude, self.own)
         self.update_sleep(visible, now)
         self.update_cursor(visible, dt)
         if visible:
@@ -712,7 +745,7 @@ class Mascot:
         else:
             self.set_shown(False)
         moving = self.mode in ("held", "fall", "land", "tip", "crash", "get_up", "edge_rise",
-                               "sit_back", "wake", "walk", "turn", "climb_up", "climb_down")
+                               "sit_back", "wake", "walk", "walk_off", "turn", "climb_up", "climb_down")
         sitting_to_play = self.mode == "game" and self.timer > self.activities.game_length - walk.SEAT_TICKS
         period = MOTION_FRAME_MS if moving or sitting_to_play else TICK_MS
         spent_ms = (time.monotonic() - now) * 1000

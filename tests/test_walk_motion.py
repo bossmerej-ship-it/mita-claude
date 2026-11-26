@@ -53,9 +53,10 @@ class WalkMotionTests(unittest.TestCase):
                 m.frame += 1
                 m.step()
                 self.assertEqual(m.pick(), pose)
-        m.prompt = (650, 615, 950, 720)
+        x = m.X
+        m.prompt = (round(x) - 5, 615, 950, 720)
         m.step(0)
-        self.assertGreater(m.X, 650)
+        self.assertEqual(m.X, x)
         self.assertEqual(m.pick(), pose)
 
     def test_turn_plants_the_current_stride_then_rotates_through_both_profiles(self):
@@ -107,6 +108,44 @@ class WalkMotionTests(unittest.TestCase):
         self.assertEqual(m.mode, "walk")
         self.assertGreater(m.X, 507.5)
 
+    def test_retracted_and_sideways_composers_release_the_walking_feet(self):
+        for prompt in ((100, 700, 900, 720), (650, 620, 950, 720)):
+            m = walking_mita()
+            x, y = m.X, m.Y
+            m.prompt = prompt
+            m.step(.5)
+            self.assertEqual((m.mode, m.on, m.X), ("fall", None, x))
+            self.assertGreater(m.Y, y)
+            self.assertLess(m.Y, y + 1)
+
+    def test_leaving_the_edge_finishes_the_stride_then_clears_the_card(self):
+        for direction in (-1, 1):
+            m = walking_mita(direction)
+            m.edge_cooldown = 0
+            m.X = 142 if direction < 0 else 858
+            with patch.object(overlay.random, "random", return_value=.4):
+                last_x = m.X
+                for _ in range(100):
+                    m.step(.5)
+                    self.assertLessEqual(abs(m.X - last_x), overlay.SPEED * .5 + .001)
+                    last_x = m.X
+                    if m.mode == "fall":
+                        break
+            self.assertEqual(m.mode, "fall")
+            for _ in range(100):
+                m.step(.5)
+                if m.on:
+                    break
+            self.assertEqual(m.on, "floor")
+
+    def test_climbing_stops_where_the_side_of_the_card_ends(self):
+        m = walking_mita()
+        m.X, m.Y, m.on, m.mode = 884, -28, None, "climb_down"
+        m.prompt = (100, 620, 900, 700)
+        m.step(.5)
+        self.assertEqual((m.mode, m.on), ("fall", None))
+        self.assertEqual(m.Y, -28)
+
     def test_every_stride_has_drawn_intermediates_that_converge_on_planted_feet(self):
         root = tk.Tk()
         root.withdraw()
@@ -125,6 +164,22 @@ class WalkMotionTests(unittest.TestCase):
             final = pixels(f"plant_{stride}_{walk.PLANT_FRAMES}")
             diff = sum(a != b for a, b in zip(final, neutral))
             self.assertLessEqual(diff, sum(a != b for a, b in zip(pixels(stride), neutral)), stride)
+
+    def test_background_shows_through_boots_and_ponytail_in_both_directions(self):
+        root = tk.Tk()
+        root.withdraw()
+        self.addCleanup(root.destroy)
+        for name, holes in (("front", [(20, 80)]), ("sit0", [(20, 80)]), ("held", [(19, 82)]),
+                            ("front34_left", [(23, 80), (10, 51)]), ("back34", [(20, 80), (10, 50)])):
+            reverse = name.removesuffix("_left") if name.endswith("_left") else name + "_left"
+            for asset, mirror in ((name, False), (reverse, True)):
+                image = tk.PhotoImage(master=root, file=str(overlay.SPRITES / (asset + ".png")))
+                for x, y in holes:
+                    x = image.width() - 1 - x if mirror else x
+                    self.assertTrue(image.transparency_get(x, y), (asset, x, y))
+                    # Both inked edges framing the gap survive.
+                    self.assertTrue(any(not image.transparency_get(i, y) for i in range(x)))
+                    self.assertTrue(any(not image.transparency_get(i, y) for i in range(x + 1, image.width())))
 
     def test_leaving_seat_brings_feet_up_before_facing_the_first_step(self):
         for direction, swing in ((1, 1), (-1, 0)):
@@ -161,7 +216,7 @@ class WalkMotionTests(unittest.TestCase):
             drops.append(m.pick()[1])
         self.assertEqual((m.mode, m.X, m.Y), ("perch", 510, -160))
         self.assertEqual(drops, sorted(drops))
-        m.prompt = (300, 610, 770, 730)
+        m.prompt = (300, 590, 770, 730)
         for _ in range(31):
             m.step()
         self.assertEqual(m.mode, "edge_rise")
