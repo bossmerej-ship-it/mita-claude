@@ -132,9 +132,8 @@ class Mascot:
         self.canvas = tk.Canvas(self.root, width=self.cw, height=self.ch, bg=plat.BG,
                                 highlightthickness=0, bd=0)
         self.canvas.pack()
-        self.sprite = self.canvas.create_image(self.cw // 2, self.base, anchor="s", image=self.img["front"])
         self.root.geometry(f"{self.cw}x{self.ch}+0+0")
-        self.own = plat.setup_window(self.root)   # прозрачность, без панели задач/Dock, без фокуса
+        self.own, self.present = plat.setup_window(self.root, self.canvas, self.cw, self.ch)
 
         self.canvas.bind("<ButtonPress-1>", self.on_press)
         self.canvas.bind("<B1-Motion>", self.on_drag)
@@ -634,11 +633,12 @@ class Mascot:
         return "front" + left, 0
 
     def set_shown(self, on):
-        # Windows: поверх всех заново каждый кадр; мак: только когда меняется (иначе крадёт фокус)
-        if on and (sys.platform != "darwin" or self.shown is not True):
-            plat.show(self.root)
-        elif not on and self.shown is not False:
-            plat.hide(self.root)
+        if self.shown == on:
+            return
+        if on:
+            plat.show(self.root, self.own)
+        else:
+            plat.hide(self.root, self.own)
         self.shown = on
 
     def tick(self):
@@ -695,20 +695,17 @@ class Mascot:
         visible = self.held or self.mode == "fall" or plat.is_foreground(claude, self.own)
         self.update_sleep(visible, now)
         self.update_cursor(visible, dt)
-        name, drop = self.pick()
-        self.canvas.itemconfig(self.sprite, image=self.img.get(name, self.img["front"]))
-        self.canvas.coords(self.sprite, self.cw // 2, self.base + drop)
-        bob = 1 if self.mode == "idle" and self.activities.greeting.remaining <= 0 and (self.frame // 25) % 2 else 0
-
         if visible:
+            name, drop = self.pick()
+            bob = 1 if self.mode == "idle" and self.activities.greeting.remaining <= 0 and (self.frame // 25) % 2 else 0
             wx = l + round(self.X) - self.cw // 2
             wy = b + round(self.Y) - self.base - bob
-            self.root.geometry(f"+{wx}+{wy}")
+            self.present(self.img.get(name, self.img["front"]), self.base + drop, wx, wy)
             self.set_shown(True)
         else:
             self.set_shown(False)
         moving = self.mode in ("held", "fall", "land", "tip", "crash", "get_up", "edge_rise",
-                               "sit_back", "wake", "walk", "turn")
+                               "sit_back", "wake", "walk", "turn", "climb_up", "climb_down")
         period = MOTION_FRAME_MS if moving else TICK_MS
         spent_ms = (time.monotonic() - now) * 1000
         self.root.after(max(1, round(period - spent_ms)), self.tick)

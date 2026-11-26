@@ -38,7 +38,7 @@ def idle_seconds():
         return None
 
 
-def setup_window(root):
+def setup_window(root, canvas, width, height):
     """Прозрачный фон, без значка в Dock, окно на всех рабочих столах и поверх полноэкранных окон."""
     root.config(bg=BG)
     root.attributes("-transparent", True)
@@ -57,10 +57,23 @@ def setup_window(root):
             _ns.append(w)
         except Exception:
             pass
-    return _OWN_PID
+    sprite = canvas.create_image(width // 2, 0, anchor="s")
+    last_image = last_bottom = last_position = None
+
+    def present(image, bottom, x, y):
+        nonlocal last_image, last_bottom, last_position
+        if image != last_image:
+            canvas.itemconfigure(sprite, image=image)
+        if bottom != last_bottom:
+            canvas.coords(sprite, width // 2, bottom)
+        if (x, y) != last_position:
+            root.geometry(f"+{x}+{y}")
+        last_image, last_bottom, last_position = image, bottom, (x, y)
+
+    return _OWN_PID, present
 
 
-def show(root):
+def show(root, own):
     """Показать, НЕ делая Python активным (иначе macOS уводит ChatGPT/Claude назад или с их рабочего стола)."""
     if _ns:
         for w in _ns:
@@ -69,7 +82,7 @@ def show(root):
         root.deiconify()
 
 
-def hide(root):
+def hide(root, own):
     if _ns:
         for w in _ns:
             w.orderOut_(None)

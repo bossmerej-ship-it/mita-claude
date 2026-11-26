@@ -3,6 +3,7 @@
 import ctypes
 import ctypes.wintypes as wt
 
+from layered_window import LayeredWindow
 from prompt_detection import PromptDetector
 from prompt_windows import WindowsPromptReader
 
@@ -22,11 +23,11 @@ WS_EX_NOACTIVATE = 0x08000000
 user32.GetWindowLongW.restype = ctypes.c_long
 user32.SetWindowLongW.restype = ctypes.c_long
 user32.GetParent.restype = wt.HWND
+user32.ShowWindow.argtypes = [wt.HWND, ctypes.c_int]
 user32.GetForegroundWindow.restype = wt.HWND
 user32.MonitorFromWindow.restype = wt.HANDLE
 
-KEY = "#ff00fe"                     # этот цвет становится прозрачным (в спрайтах его нет)
-BG = KEY
+BG = "black"  # Tk canvas handles mouse events. The layered bitmap supplies all visible pixels.
 RIGHT_BUTTONS = ("<Button-3>",)
 
 
@@ -58,24 +59,26 @@ def _title(hwnd):
     return buf.value
 
 
-def setup_window(root):
-    """Прозрачный фон, без кнопки на панели задач, не забирает фокус. Возвращает своё окно."""
-    root.config(bg=KEY)
-    root.attributes("-transparentcolor", KEY)
+def setup_window(root, canvas, width, height):
+    """Map the Tk input widgets behind an initially invisible per-pixel surface."""
+    root.withdraw()
     root.update_idletasks()
     hwnd = user32.GetParent(root.winfo_id()) or root.winfo_id()
     ex = user32.GetWindowLongW(hwnd, GWL_EXSTYLE) | WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE
     user32.SetWindowLongW(hwnd, GWL_EXSTYLE, ex)
-    return hwnd
-
-
-def show(root):
+    layer = LayeredWindow(root, hwnd, width, height)
     root.deiconify()
-    root.attributes("-topmost", True)
+    root.update_idletasks()
+    user32.ShowWindow(hwnd, 0)
+    return hwnd, layer.present
 
 
-def hide(root):
-    root.withdraw()
+def show(root, hwnd):
+    user32.ShowWindow(hwnd, 8)  # SW_SHOWNA
+
+
+def hide(root, hwnd):
+    user32.ShowWindow(hwnd, 0)  # SW_HIDE
 
 
 def find_target(last, match):
