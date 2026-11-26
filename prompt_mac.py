@@ -49,11 +49,17 @@ def read_prompt(win):
         visited += 1
         role = attribute(element, "AXRole")
         if role in ("AXTextArea", "AXTextField") and attribute(element, "AXEnabled") is not False:
-            candidates.append({"rect": bounds(element), "parents": parents,
+            frames = []
+            for ancestor, rect in parents:
+                classes = attribute(ancestor, "AXDOMClassList") or []
+                class_name = classes if isinstance(classes, str) else " ".join(classes)
+                identifier = attribute(ancestor, "AXIdentifier") or ""
+                frames.append({"rect": rect, "hint": f"{identifier} {class_name}"})
+            candidates.append({"rect": bounds(element), "parents": frames,
                                "hint": attribute(element, "AXIdentifier") or ""})
         if depth < 20:
             rect = bounds(element)
-            ancestors = ([rect] + parents)[:4] if rect else parents
+            ancestors = ([(element, rect)] + parents)[:9] if rect else parents
             # Visit the bottom/end of the view first, before a long transcript.
             for child in attribute(element, "AXChildren") or []:
                 pending.append((child, ancestors, depth + 1))

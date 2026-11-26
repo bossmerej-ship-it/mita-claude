@@ -192,3 +192,7 @@ def refocus(win):
 def prompt_rect(win, bounds):
     # Bounds distinguish multiple windows of the same macOS process.
     return _prompt_detector.get((win["pid"], win["id"]), win, bounds)
+
+
+def prompt_ready(win):
+    return _prompt_detector.has_sample((win["pid"], win["id"]))

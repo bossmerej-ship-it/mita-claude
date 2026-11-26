@@ -124,3 +124,7 @@ def refocus(win):
 
 def prompt_rect(win, bounds):
     return _prompt_detector.get(win, win, bounds)
+
+
+def prompt_ready(win):
+    return _prompt_detector.has_sample(win)

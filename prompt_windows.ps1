@@ -44,10 +44,15 @@ while ($null -ne ($line = [Console]::ReadLine())) {
             if ($readOnly -is [bool] -and $readOnly) { continue }
             $parents = @()
             $parent = $edit
-            for ($depth = 0; $depth -lt 4; $depth++) {
-                $parent = [System.Windows.Automation.TreeWalker]::ControlViewWalker.GetParent($parent)
+            # Chromium's control view skips the painted composer and goes straight to
+            # the footer that also contains file-change badges or other floating controls.
+            for ($depth = 0; $depth -lt 9; $depth++) {
+                $parent = [System.Windows.Automation.TreeWalker]::RawViewWalker.GetParent($parent)
                 if ($null -eq $parent -or $parent.Current.ControlType -eq [System.Windows.Automation.ControlType]::Window) { break }
-                $parents += ,(Rect $parent)
+                $parents += @{
+                    rect = (Rect $parent)
+                    hint = "$($parent.Current.AutomationId) $($parent.Current.ClassName)"
+                }
             }
             $candidates += @{
                 rect = (Rect $edit)
