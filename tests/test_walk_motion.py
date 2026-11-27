@@ -140,11 +140,15 @@ class WalkMotionTests(unittest.TestCase):
 
     def test_climbing_stops_where_the_side_of_the_card_ends(self):
         m = walking_mita()
-        m.X, m.Y, m.on, m.mode = 884, -28, None, "climb_down"
         m.prompt = (100, 620, 900, 700)
-        m.step(.5)
+        m.X = 894
+        m.start_climb(False, -1, m.platforms())
+        for _ in range(600):
+            m.step(.5)
+            if m.mode == "fall":
+                break
         self.assertEqual((m.mode, m.on), ("fall", None))
-        self.assertEqual(m.Y, -28)
+        self.assertAlmostEqual(m.Y, -50 + overlay.HAND_REACH, delta=1)
 
     def test_every_stride_has_drawn_intermediates_that_converge_on_planted_feet(self):
         root = tk.Tk()
@@ -160,10 +164,17 @@ class WalkMotionTests(unittest.TestCase):
 
         neutral = pixels(walk.FIRST_STEP[0])
         self.assertEqual(pixels(f"plant_{walk.FIRST_STEP[0]}_1"), neutral)
+        def soles(name):
+            image = images[name]
+            return {x for x in range(image.width()) if not image.transparency_get(x, image.height()-1)}
+
         for stride in walk.CYCLE + walk.FIRST_STEP:
             final = pixels(f"plant_{stride}_{walk.PLANT_FRAMES}")
             diff = sum(a != b for a, b in zip(final, neutral))
             self.assertLessEqual(diff, sum(a != b for a, b in zip(pixels(stride), neutral)), stride)
+            landing = [soles(stride), *(soles(f"plant_{stride}_{i}") for i in range(1,8)), soles(walk.FIRST_STEP[0])]
+            self.assertTrue(set.intersection(*landing[:5]), stride)
+            self.assertTrue(set.intersection(*landing[4:]), stride)
 
     def test_background_shows_through_boots_and_ponytail_in_both_directions(self):
         root = tk.Tk()

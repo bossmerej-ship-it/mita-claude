@@ -32,6 +32,7 @@ from collections import deque
 from pathlib import Path
 
 import activities
+import climb_motion as climbing
 import fall_motion as motion
 import rise_motion as rise
 import walk_motion as walk
@@ -121,6 +122,8 @@ class Mascot:
                                           cell=walk.CELL, rows=walk.POSE_ROWS))
         self.img.update(motion.load_poses(self.root, SPRITES / "motion" / "plant.png", SCALE,
                                           cell=walk.CELL, rows=walk.PLANT_ROWS))
+        self.img.update(motion.load_poses(self.root, SPRITES / "motion" / "climb.png", SCALE,
+                                          cell=climbing.CELL, rows=climbing.ROWS))
         self.img.update(motion.load_poses(self.root, SPRITES / "motion" / "console.png", SCALE,
                                           cell=activities.CELL, rows=activities.GAME_ROWS))
         self.img.update(motion.load_poses(self.root, SPRITES / "motion" / "greeting.png", SCALE,
@@ -150,6 +153,7 @@ class Mascot:
         self.dir = random.choice((-1, 1))
         self.on = None            # на каком уступе стоит: "floor", "ledge", "roof" или None
         self.mode = "fall"
+        self.climb = None
         self.timer = 0
         self.frame = 0
         self.walk_pixels = 0
@@ -479,6 +483,43 @@ class Mascot:
             self.start_turn()
         self.edge_cooldown = 90
 
+    def start_climb(self, upward, inward, plats):
+        top, left, right = plats["ledge"]
+        edge = left if inward > 0 else right
+        bottom = min(plats["floor"][0], self.prompt[3] - self.world[3] + HAND_REACH)
+        self.climb = climbing.Climb(upward, inward, edge, right-left, top, bottom,
+                                    self.X, self.walk_pixels, SCALE, CLIMB)
+        self.mode, self.on = ("climb_up" if upward else "climb_down"), None
+        self.dir = inward
+        self.edge_cooldown = 90
+
+    def step_climb(self, plats, dt):
+        c = self.climb
+        top, left, right = plats["ledge"]
+        if (c is None or self.prompt is None or not c.attached(left if c.inward > 0 else right, top,
+                                                               self.prompt[3]-self.world[3], HAND_REACH)):
+            self.start_fall()
+            return dt
+        end = c.duration
+        drop_off = not c.upward and c.bottom < plats["floor"][0] - 1
+        if drop_off:
+            end -= c.grip_ticks
+        used = min(dt, end - c.age)
+        c.age += used
+        self.X, self.Y = c.position()
+        if c.age < end:
+            return
+        self.climb = None
+        if drop_off:
+            self.start_fall(vy=CLIMB * SCALE)
+        else:
+            self.on = "ledge" if c.upward else "floor"
+            self.Y = plats[self.on][0]
+            self.start_walk(random.randint(60, 200))
+            if not c.upward:
+                self.start_turn()
+        return dt - used
+
     def step(self, dt=1.0):
         if self.edge_cooldown > 0:
             self.edge_cooldown = max(0, self.edge_cooldown - dt)
@@ -526,20 +567,7 @@ class Mascot:
             return self.step_fall(plats, dt)
 
         if self.mode in ("climb_up", "climb_down"):
-            top, left, right = plats["ledge"]
-            upward = self.mode == "climb_up"
-            side = left if (self.dir > 0) == upward else right
-            if (self.prompt is None or abs(self.X - side) > HAND_REACH + 1
-                    or self.Y - HAND_REACH > self.prompt[3] - self.world[3] or self.Y < top - 1):
-                self.start_fall()
-                return
-            self.Y += (-CLIMB if upward else CLIMB) * dt
-            if upward and self.Y <= top:
-                self.X += 4 * self.dir
-                self.land("ledge", 0)
-            elif not upward and self.Y >= plats["floor"][0]:
-                self.land("floor", 0)
-            return
+            return self.step_climb(plats, dt)
 
         # стоит на уступе: держимся на нём, даже если окно поменяло размер
         if self.on is None:
@@ -554,12 +582,13 @@ class Mascot:
 
         if self.mode == "walk_off":
             side = x2 if self.dir > 0 else x1
-            limit = side - self.dir * min(HAND_REACH, (x2 - x1) / 2)
+            inset = climbing.INSIDE * SCALE if self.climbing_off else HAND_REACH
+            limit = side - self.dir * min(inset, (x2 - x1) / 2)
             if (limit - self.X) * self.dir > 0:
                 self.walk_to(limit, dt)
             if (limit - self.X) * self.dir <= 0:
                 if self.climbing_off and self.prompt is not None:
-                    self.mode, self.on = "climb_down", None
+                    self.start_climb(False, -self.dir, plats)
                 else:
                     self.start_fall(self.dir * 2.5, -5)
             return
@@ -608,7 +637,8 @@ class Mascot:
             if (limit - self.X) * self.dir <= 0:
                 self.at_edge(self.on)
                 return
-            distance = self.walk_to(limit, dt)
+            previous_x = self.X
+            self.walk_to(limit, dt)
             if self.X == limit:
                 self.at_edge(self.on)
                 return
@@ -616,13 +646,12 @@ class Mascot:
             if (self.on == "floor" and self.edge_cooldown == 0 and "ledge" in plats
                     and self.prompt is not None and self.world[3] + py - self.prompt[3] <= HAND_REACH):
                 lp, lx1, lx2 = plats["ledge"]
-                for edge in (lx1, lx2):
-                    if abs(self.X - edge) < distance and py - lp > 20 and random.random() < 0.5:
-                        self.X = edge
-                        self.mode, self.on = "climb_up", None
-                        self.dir = 1 if edge == lx1 else -1
-                        self.edge_cooldown = 90
-                        return
+                edge = lx1 if self.dir > 0 else lx2
+                grip_x = edge - self.dir * climbing.OUTSIDE * SCALE
+                if (min(previous_x, self.X) <= grip_x <= max(previous_x, self.X)
+                        and py - lp > 20 and random.random() < .5):
+                    self.start_climb(True, self.dir, plats)
+                    return
         if self.timer <= 0:
             if self.mode == "game":
                 self.start_edge_rise(rise.EDGE_TICKS + self.timer, swing=1)
@@ -676,7 +705,7 @@ class Mascot:
         if m == "get_up":
             return rise.floor_pose(self.timer, self.dir)
         if m in ("climb_up", "climb_down"):
-            return ("back_step0" if (f // 8) % 2 else "back_step1"), 0
+            return self.climb.pose()
         if m in ("walk", "walk_off"):
             return walk.sprite(self.walk_pixels, SCALE, self.dir), 0
         if m == "turn":
