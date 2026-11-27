@@ -36,6 +36,7 @@ import climb_motion as climbing
 import fall_motion as motion
 import rise_motion as rise
 import walk_motion as walk
+from sprite_library import SpriteLibrary
 
 if sys.platform == "darwin":
     import platform_mac as plat       # macOS: Quartz + pyobjc
@@ -109,37 +110,24 @@ class Mascot:
         self.root.overrideredirect(True)
         self.root.attributes("-topmost", True)
 
-        self.img = {}
         try:
             self.drops = json.loads((SPRITES / "drops.json").read_text(encoding="utf-8"))
         except Exception:
             self.drops = {}
-        for f in SPRITES.glob("*.png"):
-            im = tk.PhotoImage(file=str(f))
-            self.img[f.stem] = im.zoom(SCALE, SCALE) if SCALE > 1 else im
-        self.img.update(motion.load_poses(self.root, SPRITES / "motion" / "fall.png", SCALE))
-        self.img.update(motion.load_poses(self.root, SPRITES / "motion" / "walk.png", SCALE,
-                                          cell=walk.CELL, rows=walk.POSE_ROWS))
-        self.img.update(motion.load_poses(self.root, SPRITES / "motion" / "idle.png", SCALE,
-                                          cell=(41, 88), rows=(walk.BREATH,)))
-        self.img.update(motion.load_poses(self.root, SPRITES / "motion" / "plant.png", SCALE,
-                                          cell=walk.CELL, rows=walk.PLANT_ROWS))
-        self.img.update(motion.load_poses(self.root, SPRITES / "motion" / "climb.png", SCALE,
-                                          cell=climbing.CELL, rows=climbing.ROWS))
-        self.img.update(motion.load_poses(self.root, SPRITES / "motion" / "console.png", SCALE,
-                                          cell=activities.CELL, rows=activities.GAME_ROWS))
-        self.img.update(motion.load_poses(self.root, SPRITES / "motion" / "console_steps.png", SCALE,
-                                          cell=activities.CELL, rows=activities.CONSOLE_LINK_ROWS))
-        self.img.update(motion.load_poses(self.root, SPRITES / "motion" / "greeting.png", SCALE,
-                                          cell=activities.CELL, rows=activities.GREET_ROWS))
-        self.img.update(motion.load_poses(self.root, SPRITES / "motion" / "sleep.png", SCALE,
-                                          cell=activities.CELL, rows=activities.REST_ROWS))
-        self.img.update(motion.load_poses(self.root, SPRITES / "motion" / "rest_steps.png", SCALE,
-                                          cell=activities.CELL, rows=activities.REST_LINK_ROWS))
-        self.img.update(motion.load_poses(self.root, SPRITES / "motion" / "get_up.png", SCALE,
-                                          cell=rise.CELL, rows=rise.POSE_ROWS))
-        self.cw = max(i.width() for i in self.img.values()) + 2
-        self.base = max(i.height() for i in self.img.values()) + 6   # линия ног на холсте
+        self.img = SpriteLibrary(self.root, SPRITES, SCALE)
+        self.img.add_sheet("fall", motion.CELL, motion.POSE_ROWS)
+        self.img.add_sheet("walk", walk.CELL, walk.POSE_ROWS)
+        self.img.add_sheet("idle", (41, 88), (walk.BREATH,))
+        self.img.add_sheet("plant", walk.CELL, walk.PLANT_ROWS)
+        self.img.add_sheet("climb", climbing.CELL, climbing.ROWS)
+        self.img.add_sheet("console", activities.CELL, activities.GAME_ROWS)
+        self.img.add_sheet("console_steps", activities.CELL, activities.CONSOLE_LINK_ROWS)
+        self.img.add_sheet("greeting", activities.CELL, activities.GREET_ROWS)
+        self.img.add_sheet("sleep", activities.CELL, activities.REST_ROWS)
+        self.img.add_sheet("rest_steps", activities.CELL, activities.REST_LINK_ROWS)
+        self.img.add_sheet("get_up", rise.CELL, rise.POSE_ROWS)
+        self.cw = self.img.width + 2
+        self.base = self.img.height + 6   # линия ног на холсте
         self.ch = self.base + LEG + 2
         self.canvas = tk.Canvas(self.root, width=self.cw, height=self.ch, bg=plat.BG,
                                 highlightthickness=0, bd=0)
