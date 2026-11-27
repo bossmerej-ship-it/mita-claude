@@ -120,6 +120,8 @@ class Mascot:
         self.img.update(motion.load_poses(self.root, SPRITES / "motion" / "fall.png", SCALE))
         self.img.update(motion.load_poses(self.root, SPRITES / "motion" / "walk.png", SCALE,
                                           cell=walk.CELL, rows=walk.POSE_ROWS))
+        self.img.update(motion.load_poses(self.root, SPRITES / "motion" / "idle.png", SCALE,
+                                          cell=(41, 88), rows=(walk.BREATH,)))
         self.img.update(motion.load_poses(self.root, SPRITES / "motion" / "plant.png", SCALE,
                                           cell=walk.CELL, rows=walk.PLANT_ROWS))
         self.img.update(motion.load_poses(self.root, SPRITES / "motion" / "climb.png", SCALE,
@@ -318,7 +320,7 @@ class Mascot:
             elif self.on == "ledge":
                 self.start_edge_rise()
             elif self.on:
-                self.mode, self.timer = "idle", 20
+                self.start_idle(20)
             else:
                 self.start_fall()
         self.save()
@@ -421,10 +423,14 @@ class Mascot:
             if self.mode == "walk":
                 self.activities.bridge.play(self.to_front())
             if r < .85:
-                self.mode, self.timer = "idle", random.randint(40, 130)
+                self.start_idle(random.randint(40, 130))
             else:
                 self.mode, self.timer = "look", random.randint(30, 60)
                 self.look_length = self.timer
+
+    def start_idle(self, duration):
+        self.activities.idle_age = 0.0
+        self.mode, self.timer = "idle", duration
 
     def start_walk(self, duration):
         if self.mode != "walk":
@@ -514,7 +520,7 @@ class Mascot:
         elif self.on == "ledge":
             self.start_edge_rise(rise.EDGE_TICKS + self.timer, swing=0)
         else:
-            self.mode, self.timer = "idle", 20
+            self.start_idle(20)
 
     def at_edge(self, name):
         """Дошла до края уступа: развернуться, слезть или спрыгнуть."""
@@ -688,6 +694,8 @@ class Mascot:
             self.air_pose += .5 * dt
             return
 
+        if self.mode == "idle":
+            self.activities.idle_age += dt
         self.timer -= dt
         if self.mode == "perch" and self.timer <= rise.EDGE_TICKS:
             self.start_edge_rise(self.timer)
@@ -725,7 +733,7 @@ class Mascot:
                 if self.on == "ledge":
                     self.start_sitting(overshoot=self.timer)
                 else:
-                    self.mode, self.timer = "idle", 40
+                    self.start_idle(40)
             elif self.mode == "sit_back":
                 self.mode, self.timer = "perch", self.perch_ticks + self.timer
             else:
@@ -773,6 +781,8 @@ class Mascot:
             return walk.turn_sprite(self.timer, self.dir, self.walk_pixels, SCALE), 0
         if m == "look":
             return walk.look_pose(self.look_length - self.timer, self.timer, self.dir)
+        if m == "idle":
+            return walk.idle_pose(self.activities.idle_age, self.dir)
         return "front" + left, 0
 
     def set_shown(self, on):

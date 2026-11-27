@@ -21,6 +21,26 @@ def walking_mita(direction=1, surface="ledge"):
 
 
 class WalkMotionTests(unittest.TestCase):
+    def test_breathing_moves_the_upper_body_and_preserves_every_pixel_from_the_waist_down(self):
+        root = tk.Tk()
+        root.withdraw()
+        self.addCleanup(root.destroy)
+        for scale in (1, 2):
+            cels = overlay.motion.load_poses(root, overlay.SPRITES / "motion" / "idle.png", scale,
+                                            cell=(41, 88), rows=(walk.BREATH,))
+            for suffix in ("", "_left"):
+                front = tk.PhotoImage(master=root, file=str(overlay.SPRITES / ("front" + suffix + ".png"))).zoom(scale)
+                def pixels(im, first_row):
+                    return root.tk.call(im, "data", "-from", 0, first_row*scale, im.width(), im.height(),
+                                        "-format", "ppm", "-background", "#00ff00")
+                lower = pixels(front,62)
+                upper = set()
+                for name in walk.BREATH:
+                    im = cels[name + suffix]
+                    self.assertEqual(pixels(im,64),lower)
+                    upper.add(pixels(im,0))
+                self.assertEqual(len(upper), len(walk.BREATH))
+
     def test_same_ground_distance_gives_same_pose_across_speeds_and_frame_rates(self):
         for direction in (-1, 1):
             poses = []

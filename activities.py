@@ -173,6 +173,7 @@ class Activities:
         self.rest_pinned = False
         self.held_rub = 0.0
         self.seat_pause = 0.0
+        self.idle_age = 0.0
 
     def begin_game(self, seated, direction):
         self.game_direction = direction

@@ -15,6 +15,17 @@ PLANT_ROWS = tuple(_PLANTS[i:i + 8] for i in range(0, len(_PLANTS), 8))
 PIVOT_FRAME_TICKS = .55
 TURN_TICKS = PLANT_TICKS + 2 * len(rise.PIVOT) * PIVOT_FRAME_TICKS
 SEAT_TICKS = PLANT_TICKS + rise.EDGE_TICKS
+BREATH = ("idle_in1", "idle_in2", "idle_in3")
+
+
+def idle_pose(age, direction):
+    phase = age % 86
+    if phase < 16 or phase >= 70:
+        name = "front"
+    else:
+        index = min(2, int((phase - 16) / 8), int((70 - phase) / 8))
+        name = BREATH[index]
+    return name + ("_left" if direction < 0 else ""), 0
 
 
 def travel(age, dt, speed):
