@@ -16,7 +16,8 @@ FRAME_TICKS = .75
 GRIPS = tuple(tuple(f"grip{phase:02}_{i}" for i in range(GRIP_FRAMES)) for phase in range(PERIOD))
 RAIL = tuple(f"rail{i:02}" for i in range(PERIOD))
 CREST = tuple(f"crest{i:02}" for i in range(CREST_FRAMES))
-ROWS = GRIPS + tuple(frames[i:i+8] for frames in (RAIL, CREST) for i in range(0, len(frames), 8))
+LOW_GRIPS = tuple(tuple(f"low_grip{j:02}_{i}" for i in range(GRIP_FRAMES)) for j in range(1,17))
+ROWS = GRIPS + tuple(frames[i:i+8] for frames in (RAIL, CREST) for i in range(0, len(frames), 8)) + LOW_GRIPS
 
 
 def ease(t):
@@ -35,7 +36,8 @@ class Climb:
         fraction = 1 - min(1, (bottom - top) / (CREST_HEIGHT * scale))
         self.crest_start = 0 if not fraction else .5 - math.sin(math.asin(1 - 2 * fraction) / 3)
         self.crest_ticks = (CREST_FRAMES - 1) * FRAME_TICKS
-        self.grip_phase = round(-self.wall / scale) % PERIOD
+        crest_pair = round(self.crest_start * (CREST_FRAMES-1) / 2)
+        self.grip = LOW_GRIPS[crest_pair-1] if crest_pair else GRIPS[round(-self.wall / scale) % PERIOD]
         self.grip_ticks = (GRIP_FRAMES + 1) * FRAME_TICKS
         self.rail_end = self.grip_ticks + self.wall / self.speed
         self.travel_ticks = self.rail_end + (1 - self.crest_start) * self.crest_ticks
@@ -50,9 +52,15 @@ class Climb:
         self.duration = self.entry_ticks + self.travel_ticks
         self.age = 0.0
 
-    def attached(self, edge, top, card_bottom, reach):
-        return (abs(edge - self.edge) <= 2 * self.scale and abs(top - self.top) <= 2 * self.scale
-                and self.position()[1] <= card_bottom + reach + 1)
+    def follow_edge(self, edge, width, top, card_bottom, reach):
+        inset = min(INSIDE * self.scale, width / 2)
+        if (abs(edge - self.edge) > 2 * self.scale or abs(top - self.top) > 2 * self.scale
+                or self.inset - inset > 2 * self.scale):
+            return False
+        self.start_x += edge - self.edge
+        self.bottom += top - self.top
+        self.edge, self.top, self.inset = edge, top, inset
+        return self.position()[1] <= card_bottom + reach + 1
 
     def local_time(self):
         t = max(0, min(self.travel_ticks, self.age - self.entry_ticks))
@@ -83,7 +91,7 @@ class Climb:
         t = self.local_time()
         if t < self.grip_ticks:
             i = int(t / FRAME_TICKS)
-            name = walk_motion.FIRST_STEP[0] if i == 0 else GRIPS[self.grip_phase][i-1]
+            name = walk_motion.FIRST_STEP[0] if i == 0 else self.grip[i-1]
         elif t < self.rail_end:
             phase = round((t - self.rail_end) * self.speed / self.scale) % PERIOD
             name = RAIL[phase]

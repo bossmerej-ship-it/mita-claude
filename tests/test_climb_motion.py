@@ -75,11 +75,20 @@ class ClimbingTests(unittest.TestCase):
             m.prompt = (120, 571, 120+width, 593)
             m.X = 120 - climb.OUTSIDE
             m.start_climb(True,1,m.platforms())
+            self.assertIn(m.climb.grip,climb.LOW_GRIPS)
             m.step(m.climb.duration)
             self.assertEqual((m.mode,m.on,m.Y), ("walk","ledge",-29))
             self.assertTrue(120 <= m.X <= 120+width)
             m.step(.5)
             self.assertIn(m.mode, ("sit_back","game"))
+
+    def test_small_layout_changes_keep_the_hand_on_the_actual_corner(self):
+        m = climbing_mita(True,1,1)
+        m.step(m.climb.entry_ticks + m.climb.rail_end + 5)
+        x,y,pose = m.X,m.Y,m.pick()
+        m.prompt = (81,471,421,591)
+        m.step(0)
+        self.assertEqual((m.X,m.Y,m.pick()),(x+1,y+1,pose))
 
     def test_an_inked_hand_then_a_shoe_stay_on_the_same_lip_pixels_at_both_scales(self):
         root=tk.Tk()

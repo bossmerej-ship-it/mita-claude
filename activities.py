@@ -132,7 +132,6 @@ class CursorGreeting:
         return self.clip.remaining
 
     def update(self, point, center, direction, scale, dt):
-        self.clip.advance(dt)
         self.cooldown = max(0, self.cooldown - dt)
         x, y = point
         dx, dy = x - center[0], y - center[1]
@@ -174,6 +173,11 @@ class Activities:
         self.held_rub = 0.0
         self.seat_pause = 0.0
         self.idle_age = 0.0
+
+    def step_greeting(self, dt):
+        unused = self.greeting.clip.advance(dt)
+        self.seat_pause += dt - unused
+        return unused
 
     def begin_game(self, seated, direction):
         self.game_direction = direction

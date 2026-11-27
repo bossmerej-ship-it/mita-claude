@@ -554,8 +554,8 @@ class Mascot:
     def step_climb(self, plats, dt):
         c = self.climb
         top, left, right = plats["ledge"]
-        if self.prompt is None or not c.attached(left if c.inward > 0 else right, top,
-                                                self.prompt[3] - self.world[3], HAND_REACH):
+        edge = left if c.inward > 0 else right
+        if self.prompt is None or not c.follow_edge(edge, right - left, top, self.prompt[3] - self.world[3], HAND_REACH):
             self.start_fall()
             return dt
         end = c.duration
@@ -618,8 +618,7 @@ class Mascot:
             margin = min(self.cw / 2, (x2 - x1) / 2)
             self.X = min(x2 - margin, max(x1 + margin, self.X))
             if self.activities.greeting.remaining:
-                self.activities.seat_pause += dt
-                return
+                return self.activities.step_greeting(dt)
             if resting:
                 if self.activities.bridge.remaining:
                     return self.activities.bridge.advance(dt)
@@ -668,8 +667,7 @@ class Mascot:
             self.step_rest(dt)
             return
         if self.activities.greeting.remaining > 0:
-            self.activities.seat_pause += dt
-            return  # стопы остаются на опоре, таймер игры продолжится после приветствия
+            return self.activities.step_greeting(dt)
         if self.on == "ledge" and self.mode in activities.FREE_MODES:
             self.activities.game_wait = max(0, self.activities.game_wait - dt)
         if (self.on == "ledge" and self.mode in ("walk", "perch", "edge_rise")

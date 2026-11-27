@@ -95,8 +95,9 @@ class GreetingTests(unittest.TestCase):
                 poses.append(m.pick())
                 if "raise" in m.pick()[0]:
                     cursor[0] = x - direction*22
-                m.step(.35)
-                m.update_cursor(True, .35)
+                dt = min(.35, m.activities.greeting.remaining)
+                m.step(dt)
+                m.update_cursor(True, dt)
                 self.assertEqual((m.X, m.Y, m.timer, m.walk_pixels, m.walk_age), (x, y, 91, 34, 28))
             entry = walk.face_front(34, direction, 1)
             unique = [v for i,v in enumerate(poses) if i == 0 or v != poses[i-1]]
@@ -139,8 +140,9 @@ class GreetingTests(unittest.TestCase):
                 pose, drop = m.pick()
                 self.assertEqual(drop, overlay.LEG)
                 poses.add(pose)
-                m.step(.5)
-                m.update_cursor(True, .5)
+                dt = min(.5, m.activities.greeting.remaining)
+                m.step(dt)
+                m.update_cursor(True, dt)
             self.assertTrue({"pad_far_notice", "pad_far_wave_in", "pad_far_wave_out"} <= poses)
             self.assertEqual(m.pick(), original)
             self.assertEqual(m.timer, before)
@@ -156,6 +158,19 @@ class GreetingTests(unittest.TestCase):
                 m.update_cursor(True, 1)
             self.assertGreater(m.activities.greeting.remaining, 0)
             self.assertEqual(m.activities.greeting.direction, 1)
+
+    def test_fractional_end_of_a_greeting_returns_unused_time_to_the_game(self):
+        m = mascot()
+        m.start_game(seated=True)
+        m.timer = m.activities.game_length - activities.PLAY_START - 5
+        m.pointer_world=lambda:(m.X+12,m.Y-32)
+        m.update_cursor(True,30)
+        timer=m.timer
+        m.step(m.activities.greeting.remaining-.25)
+        self.assertEqual(m.timer,timer)
+        m.step(1.25)
+        self.assertAlmostEqual(m.timer,timer-1)
+        self.assertEqual(m.activities.greeting.remaining,0)
 
     def test_flybys_hidden_windows_and_dragging_do_not_trigger_a_wave(self):
         m = mascot(place="floor")
