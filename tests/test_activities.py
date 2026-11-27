@@ -5,6 +5,7 @@ from unittest.mock import patch
 
 import activities
 import mascot_overlay as overlay
+import walk_motion as walk
 
 
 def mascot(place="ledge", direction=1):
@@ -34,7 +35,7 @@ class ConsoleTests(unittest.TestCase):
             corner = m.X
             self.assertGreater((corner - 250) * direction, 100)
             poses = []
-            for _ in range(500):
+            for _ in range(950):
                 if m.mode != "game":
                     break
                 pose, drop = m.pick()
@@ -42,12 +43,13 @@ class ConsoleTests(unittest.TestCase):
                 if pose.startswith("game_"):
                     self.assertEqual(drop, overlay.LEG)
                 self.assertEqual((m.X, m.Y), (corner, -130))
-                m.step()
+                m.step(.5)
             distinct = [a for i, a in enumerate(poses) if i == 0 or a != poses[i-1]]
-            start = distinct.index("game_reach")
-            self.assertEqual(distinct[start:start+4], list(activities.UNPACK))
+            start = distinct.index(activities.UNPACK_SEQUENCE[0])
+            self.assertEqual(distinct[start:start+len(activities.UNPACK_SEQUENCE)], list(activities.UNPACK_SEQUENCE))
             self.assertTrue(set(activities.PLAY) <= set(poses))
-            self.assertEqual(distinct[-5:], [*reversed(activities.UNPACK), "sit1"])
+            self.assertEqual(distinct[-len(activities.UNPACK_SEQUENCE)-1:], [*reversed(activities.UNPACK_SEQUENCE), "sit1"])
+            self.assertEqual(m.pick(), (overlay.rise.SWINGS[1][0] + ("_left" if direction < 0 else ""), overlay.LEG))
             self.assertEqual(m.mode, "edge_rise")
             for _ in range(2 * int(overlay.rise.EDGE_TICKS) + 4):
                 if m.mode == "walk":
@@ -78,10 +80,51 @@ class ConsoleTests(unittest.TestCase):
 
 
 class GreetingTests(unittest.TestCase):
+    def test_mid_stride_wave_plants_the_feet_and_returns_to_the_interrupted_step(self):
+        for direction in (-1, 1):
+            m = mascot("floor", direction)
+            m.walk_pixels, m.walk_age, m.timer = 34, 28, 91
+            cursor = [m.X + direction*22, m.Y-40]
+            m.pointer_world = lambda: tuple(cursor)
+            first, x, y = m.pick(), m.X, m.Y
+            with patch.object(activities.random, "random", return_value=0):
+                m.update_cursor(True, 30)
+            self.assertEqual(m.pick(), first)
+            poses = []
+            while m.activities.greeting.remaining:
+                poses.append(m.pick())
+                if "raise" in m.pick()[0]:
+                    cursor[0] = x - direction*22
+                m.step(.35)
+                m.update_cursor(True, .35)
+                self.assertEqual((m.X, m.Y, m.timer, m.walk_pixels, m.walk_age), (x, y, 91, 34, 28))
+            entry = walk.face_front(34, direction, 1)
+            unique = [v for i,v in enumerate(poses) if i == 0 or v != poses[i-1]]
+            self.assertEqual(unique[:len(entry)], list(entry))
+            self.assertEqual(unique[-len(entry):], list(reversed(entry)))
+            self.assertEqual(m.activities.greeting.direction, direction)
+            self.assertEqual(m.pick(), first)
+            m.step()
+            self.assertGreater((m.X-x)*direction, 0)
+
+    def test_timer_stop_from_walk26_plants_before_standing(self):
+        for action, expected in ((.72, "idle"), (.94, "look")):
+            m = mascot("floor")
+            m.walk_pixels, m.timer = 18, 0
+            with patch.object(overlay.random, "random", return_value=action):
+                m.step(0)
+            self.assertEqual((m.mode, m.pick()), (expected, ("walk26", 0)))
+            self.assertEqual(m.activities.bridge.frames, walk.face_front(18, 1, 1))
+            x, y, timer = m.X, m.Y, m.timer
+            while m.activities.bridge.remaining:
+                m.step(min(.5, m.activities.bridge.remaining))
+                self.assertEqual((m.X, m.Y, m.timer), (x,y,timer))
+            self.assertIn(m.pick()[0], ("front", overlay.rise.PIVOT[0]))
+
     def test_dwell_pauses_and_resumes_the_same_game_without_repeating(self):
         m = mascot()
         m.start_game(seated=True)
-        m.timer = m.activities.game_length - 50
+        m.timer = m.activities.game_length - activities.PLAY_START - 5
         pointer = [m.X-24, m.Y-32]
         m.pointer_world = lambda: tuple(pointer)
         with patch.object(activities.random, "random", return_value=.1):
@@ -91,13 +134,15 @@ class GreetingTests(unittest.TestCase):
             m.update_cursor(True, 1)
             before = m.timer
             poses = set()
-            for _ in range(50):
+            original = m.pick()
+            while m.activities.greeting.remaining:
                 pose, drop = m.pick()
                 self.assertEqual(drop, overlay.LEG)
                 poses.add(pose)
-                m.step()
-                m.update_cursor(True, 1)
-            self.assertTrue({"pad_notice_left", "pad_wave_in_left", "pad_wave_out_left"} <= poses)
+                m.step(.5)
+                m.update_cursor(True, .5)
+            self.assertTrue({"pad_far_notice", "pad_far_wave_in", "pad_far_wave_out"} <= poses)
+            self.assertEqual(m.pick(), original)
             self.assertEqual(m.timer, before)
             m.step()
             self.assertLess(m.timer, before)
@@ -109,7 +154,8 @@ class GreetingTests(unittest.TestCase):
             pointer[0] = m.X+24
             for _ in range(30):
                 m.update_cursor(True, 1)
-            self.assertEqual(m.pick()[0], "pad_notice")
+            self.assertGreater(m.activities.greeting.remaining, 0)
+            self.assertEqual(m.activities.greeting.direction, 1)
 
     def test_flybys_hidden_windows_and_dragging_do_not_trigger_a_wave(self):
         m = mascot(place="floor")
@@ -125,7 +171,8 @@ class GreetingTests(unittest.TestCase):
             for _ in range(30):
                 m.update_cursor(True, 1)
         self.assertFalse(m.activities.greeting.wave)
-        self.assertEqual(m.pick(), ("stand_notice", 0))
+        self.assertEqual(m.pick(), ("step_in0", 0))
+        self.assertIn(("stand_notice", 0), m.activities.greeting.clip.frames)
         m.start_fall()
         m.update_cursor(True, 50)
         self.assertEqual(m.activities.greeting.remaining, 0)
@@ -144,7 +191,9 @@ class SleepTests(unittest.TestCase):
             self.assertEqual(m.mode, "walk")
             idle.return_value = activities.SLEEP_AFTER_SECONDS
             m.update_sleep(True, 75.5)
-        self.assertEqual((m.mode, m.pick()), ("yawn", ("floor_drowsy", 0)))
+        self.assertEqual((m.mode, m.pick()), ("yawn", ("step_in0", 0)))
+        m.step(m.activities.bridge.remaining)
+        self.assertEqual(m.pick(), ("floor_drowsy", 0))
         modes, poses = [], set()
         for _ in range(230):
             if not modes or modes[-1] != m.mode:
@@ -158,7 +207,10 @@ class SleepTests(unittest.TestCase):
                          "floor_breathe_in", "floor_breathe_out"} <= poses)
         with patch.object(overlay.plat, "idle_seconds", return_value=0):
             m.update_sleep(True, 87)
-        self.assertEqual((m.mode, m.pick()[0]), ("wake", "floor_rub_in"))
+        self.assertEqual(m.mode, "wake")
+        self.assertIn("breathe", m.pick()[0])
+        m.step(m.activities.bridge.remaining)
+        self.assertEqual(m.pick()[0], "floor_rub_in")
         poses = set()
         for _ in range(68):
             poses.add(m.pick()[0])
@@ -187,15 +239,17 @@ class SleepTests(unittest.TestCase):
         with patch.object(overlay.plat, "idle_seconds", return_value=90):
             m.update_sleep(True, 1)
         offsets = []
-        for _ in range(12):
+        while m.activities.bridge.remaining:
             offsets.append(m.pick()[1])
-            m.step()
+            m.step(.5)
         self.assertEqual((offsets[0], offsets[-1]), (0, overlay.LEG))
         self.assertEqual(offsets, sorted(offsets))
         m.mode, m.st["sit"] = "sit", True
         m.remember_sit()
         with patch.object(overlay.plat, "idle_seconds", return_value=90):
             m.update_sleep(True, 2)
+        self.assertEqual(m.pick(), ("sit1_left", overlay.LEG))
+        m.step(m.activities.bridge.remaining)
         self.assertEqual(m.pick(), ("edge_drowsy_left", overlay.LEG))
         m.world, m.prompt = (0, 0, 640, 650, 650), (160, 450, 550, 630)
         for _ in range(125):
@@ -203,6 +257,7 @@ class SleepTests(unittest.TestCase):
         self.assertEqual((m.mode, m.X, m.Y), ("sleep", 320, -200))
         with patch.object(overlay.plat, "idle_seconds", return_value=0):
             m.update_sleep(True, 10)
+        m.step(m.activities.bridge.remaining)
         for _ in range(34):
             m.step()
         self.assertEqual((m.mode, m.X, m.st["sit"]), ("sit", 320, True))

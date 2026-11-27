@@ -187,6 +187,17 @@ class PromptSeatTests(unittest.TestCase):
         self.m.present.assert_not_called()
         hide.assert_called_once_with(self.m.root, self.m.own)
 
+    def test_idle_never_lifts_the_shoes_off_the_floor(self):
+        m=self.m
+        m.mode,m.on,m.timer,m.held = "idle","floor",120,False
+        feet=[]
+        for phase in (0,25,50,75):
+            m.frame=phase
+            self.tick_in("Codex")
+            _,bottom,_,y=m.present.call_args.args
+            feet.append(y+bottom)
+        self.assertEqual(feet,[900]*4)
+
     def drop_above_prompt(self, x=650, y=-250):
         overlay.plat.prompt_rect.return_value = (300, 700, 900, 860)
         self.m.X, self.m.Y = x, y

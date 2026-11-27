@@ -126,10 +126,14 @@ class Mascot:
                                           cell=climbing.CELL, rows=climbing.ROWS))
         self.img.update(motion.load_poses(self.root, SPRITES / "motion" / "console.png", SCALE,
                                           cell=activities.CELL, rows=activities.GAME_ROWS))
+        self.img.update(motion.load_poses(self.root, SPRITES / "motion" / "console_steps.png", SCALE,
+                                          cell=activities.CELL, rows=activities.CONSOLE_LINK_ROWS))
         self.img.update(motion.load_poses(self.root, SPRITES / "motion" / "greeting.png", SCALE,
                                           cell=activities.CELL, rows=activities.GREET_ROWS))
         self.img.update(motion.load_poses(self.root, SPRITES / "motion" / "sleep.png", SCALE,
                                           cell=activities.CELL, rows=activities.REST_ROWS))
+        self.img.update(motion.load_poses(self.root, SPRITES / "motion" / "rest_steps.png", SCALE,
+                                          cell=activities.CELL, rows=activities.REST_LINK_ROWS))
         self.img.update(motion.load_poses(self.root, SPRITES / "motion" / "get_up.png", SCALE,
                                           cell=rise.CELL, rows=rise.POSE_ROWS))
         self.cw = max(i.width() for i in self.img.values()) + 2
@@ -227,21 +231,37 @@ class Mascot:
 
     def update_cursor(self, visible, dt):
         greeting = self.activities.greeting
-        if (not visible or self.on is None or self.mode not in activities.GREET_MODES
+        if (not visible or self.on is None or self.mode not in activities.GREET_MODES or self.activities.bridge.remaining
                 or self.mode == "perch" and self.timer <= rise.EDGE_TICKS
-                or self.mode == "game" and not 19 < self.timer <= self.activities.game_length - activities.PLAY_START):
+                or self.mode == "game" and not activities.PACK_TICKS < self.timer <= self.activities.game_length - activities.PLAY_START):
             greeting.cancel()
             return
         seated = self.on == "ledge" and self.mode in ("sit", "perch", "game")
         center = (self.X, self.Y - 43 * SCALE + (LEG if seated else 0))
-        greeting.update(self.pointer_world(), center, self.dir, SCALE, dt)
+        facing = self.activities.game_direction if self.mode == "game" else self.dir
+        if greeting.update(self.pointer_world(), center, facing, SCALE, dt):
+            posture = "pad" if self.mode == "game" else ("seat" if seated else "stand")
+            greeting.begin(self.to_front(), posture, facing, LEG if seated else 0)
+
+    def to_front(self):
+        """Start with the pose actually on screen, keeping the shoes on their support."""
+        if self.mode == "walk":
+            return walk.face_front(self.walk_pixels, self.dir, SCALE)
+        current = self.pick()
+        name = current[0].removesuffix("_left")
+        if name in rise.PIVOT:
+            suffix = "_left" if self.dir < 0 else ""
+            return tuple((key + suffix, 0) for key in reversed(rise.PIVOT[:rise.PIVOT.index(name)+1]))
+        return (current,)
 
     def on_press(self, e):
         if self.world is None:
             return
         self.held = True
+        self.climb = None
         self.activities.held_rub = activities.RUB_TICKS if self.mode in activities.REST_MODES else 0
         self.activities.greeting.cancel()
+        self.activities.bridge.play(())
         # Подняли даже закреплённую Миту: после отпускания снова действует физика.
         if self.st["sit"]:
             self.st["sit"] = False
@@ -279,6 +299,7 @@ class Mascot:
             self.root.destroy()
             return
         self.activities.greeting.cancel()
+        self.activities.bridge.play(())
         plat.refocus(self.target[0])
         self.st["sit"] = not self.st["sit"]
         if self.st["sit"]:
@@ -315,7 +336,9 @@ class Mascot:
     # ---------- поведение ----------
     def start_fall(self, vx=0.0, vy=0.0, pose=0.0):
         self.activities.greeting.cancel()
+        self.activities.bridge.play(())
         self.activities.held_rub = 0
+        self.climb = None
         self.mode, self.on = "fall", None
         self.vx, self.vy = vx, vy
         self.air_pose, self.air_ticks = pose, 0.0
@@ -381,13 +404,25 @@ class Mascot:
             return
         r = random.random()
         if r < 0.6:
+            previous = self.mode
+            approach = self.to_front() if previous != "walk" else ()
             self.start_walk(random.randint(60, 220))
             if random.random() < 0.3:
-                self.start_turn()
-        elif r < 0.85:
-            self.mode, self.timer = "idle", random.randint(40, 130)
+                if previous == "walk":
+                    self.start_turn()
+                else:
+                    self.dir *= -1
+            if approach:
+                suffix = "_left" if self.dir < 0 else ""
+                self.activities.bridge.play((*approach, *((key + suffix, 0) for key in rise.PIVOT)))
         else:
-            self.mode, self.timer = "look", random.randint(30, 60)
+            if self.mode == "walk":
+                self.activities.bridge.play(self.to_front())
+            if r < .85:
+                self.mode, self.timer = "idle", random.randint(40, 130)
+            else:
+                self.mode, self.timer = "look", random.randint(30, 60)
+                self.look_length = self.timer
 
     def start_walk(self, duration):
         if self.mode != "walk":
@@ -409,26 +444,27 @@ class Mascot:
         self.mode, self.timer = "turn", walk.TURN_TICKS
 
     def seat_swing(self):
-        return 0 if (self.frame // 20) % 2 else 1
+        return 0 if ((self.frame - self.activities.seat_pause) // 20) % 2 else 1
 
     def start_sitting(self, rest=60, overshoot=0):
         duration = walk.SEAT_TICKS if self.mode == "walk" else rise.LIFT_TICKS
         self.perch_ticks = rest
         self.mode, self.timer = "sit_back", duration + overshoot
 
-    def start_edge_rise(self, remaining=rise.EDGE_TICKS, swing=None):
+    def start_edge_rise(self, remaining=rise.EDGE_TICKS, swing=None, facing=None):
         self.rise_swing = self.seat_swing() if swing is None else swing
+        self.rise_facing = self.dir if facing is None else facing
         self.mode, self.timer = "edge_rise", remaining
 
     def start_game(self, seated=False):
+        self.mode, self.timer = "game", self.activities.begin_game(seated, self.dir)
         if not seated:
             self.dir *= -1  # после игры пойдёт от края обратно
-        self.mode, self.timer = "game", self.activities.begin_game(seated)
 
     def update_sleep(self, visible, now):
         act = self.activities
         resting = self.mode in activities.REST_MODES
-        if (not visible or self.on is None or now < act.next_idle_check
+        if (not visible or self.on is None or now < act.next_idle_check or act.bridge.remaining or act.greeting.remaining
                 or self.mode == "wake" or not (resting or self.mode in activities.CAN_START_REST)):
             return
         act.next_idle_check = now + .5
@@ -442,7 +478,21 @@ class Mascot:
             phase = "yawn"
         else:
             return
-        act.rest_drop = self.pick()[1]
+        current = self.pick()
+        suffix = "_left" if self.dir < 0 else ""
+        if phase == "wake":
+            place = "edge" if self.on == "ledge" else "floor"
+            key = current[0].removesuffix("_left").removeprefix(place + "_").split("_to_")[0]
+            entry = [current]
+            if key in activities.WAKE_FROM:
+                entry.extend((f"{place}_{key}_to_rub_in_{i}" + suffix, current[1]) for i in range(3))
+        else:
+            entry = list(self.to_front())
+            if self.on == "ledge" and current[1] != LEG:
+                entry.extend(rise.edge_pose(t * rise.FRAME_TICKS, self.dir, 0, SCALE, sitting_down=True)
+                             for t in range(len(rise.LIFT[0]), 0, -1))
+        act.rest_drop = LEG if self.on == "ledge" else 0
+        act.bridge.play(entry)
         act.greeting.cancel()
         self.mode, self.timer = phase, activities.REST_PHASES[phase][-1][0]
 
@@ -496,8 +546,8 @@ class Mascot:
     def step_climb(self, plats, dt):
         c = self.climb
         top, left, right = plats["ledge"]
-        if (c is None or self.prompt is None or not c.attached(left if c.inward > 0 else right, top,
-                                                               self.prompt[3]-self.world[3], HAND_REACH)):
+        if self.prompt is None or not c.attached(left if c.inward > 0 else right, top,
+                                                self.prompt[3] - self.world[3], HAND_REACH):
             self.start_fall()
             return dt
         end = c.duration
@@ -559,7 +609,12 @@ class Mascot:
                 x1, x2 = 0, w
             margin = min(self.cw / 2, (x2 - x1) / 2)
             self.X = min(x2 - margin, max(x1 + margin, self.X))
+            if self.activities.greeting.remaining:
+                self.activities.seat_pause += dt
+                return
             if resting:
+                if self.activities.bridge.remaining:
+                    return self.activities.bridge.advance(dt)
                 self.step_rest(dt)
             return
 
@@ -599,10 +654,13 @@ class Mascot:
                 self.X = x1
         elif self.mode in ("walk", "crash", "get_up") or resting:
             self.X = min(x2, max(x1, self.X))
+        if self.activities.bridge.remaining:
+            return self.activities.bridge.advance(dt)
         if resting:
             self.step_rest(dt)
             return
         if self.activities.greeting.remaining > 0:
+            self.activities.seat_pause += dt
             return  # стопы остаются на опоре, таймер игры продолжится после приветствия
         if self.on == "ledge" and self.mode in activities.FREE_MODES:
             self.activities.game_wait = max(0, self.activities.game_wait - dt)
@@ -654,7 +712,7 @@ class Mascot:
                     return
         if self.timer <= 0:
             if self.mode == "game":
-                self.start_edge_rise(rise.EDGE_TICKS + self.timer, swing=1)
+                self.start_edge_rise(rise.EDGE_TICKS + self.timer, swing=1, facing=self.activities.game_direction)
             elif self.mode in ("turn", "edge_rise"):
                 self.start_walk(random.randint(60, 200))
             elif self.mode == "land" and self.on == "ledge":
@@ -673,22 +731,23 @@ class Mascot:
 
     # ---------- картинка ----------
     def pick(self):
-        f = self.frame
         left = "_left" if self.dir < 0 else ""
         m = self.mode
+        if self.activities.bridge.remaining:
+            return self.activities.bridge.pose()
         if m in activities.REST_MODES:
             return activities.rest_pose(m, self.timer, self.dir, self.on == "ledge", self.activities.rest_drop, LEG)
         if m == "held" and self.activities.held_rub > 0:
             return activities.held_rub_pose(self.activities.held_rub, self.dir)
         if self.activities.greeting.remaining > 0:
-            seated = self.on == "ledge" and m in ("sit", "perch", "game")
-            return self.activities.greeting.pose(m, seated), LEG if seated else 0
+            return self.activities.greeting.clip.pose()
         if m == "game":
-            return self.activities.game_pose(self.timer, self.dir, self.walk_pixels, SCALE, LEG)
+            return self.activities.game_pose(self.timer, self.activities.game_direction, self.walk_pixels, SCALE, LEG)
         if m in ("held", "fall", "tip"):
             return motion.air_sprite(self.air_pose, self.air_ticks) + left, 0
         if m == "edge_rise":
-            return rise.edge_pose(self.timer, self.dir, self.rise_swing, SCALE)
+            facing = self.rise_facing if rise.EDGE_TICKS - self.timer < rise.LIFT_TICKS else self.dir
+            return rise.edge_pose(self.timer, facing, self.rise_swing, SCALE)
         if m == "sit_back":
             return walk.sitting_pose(self.timer, self.dir, self.walk_pixels, SCALE)
         if m in ("sit", "perch"):
@@ -711,7 +770,7 @@ class Mascot:
         if m == "turn":
             return walk.turn_sprite(self.timer, self.dir, self.walk_pixels, SCALE), 0
         if m == "look":
-            return ("back34" + left) if self.timer > 8 else ("front34" + left), 0
+            return walk.look_pose(self.look_length - self.timer, self.timer, self.dir)
         return "front" + left, 0
 
     def set_shown(self, on):
@@ -786,9 +845,8 @@ class Mascot:
         self.update_cursor(visible, dt)
         if visible:
             name, drop = self.pick()
-            bob = 1 if self.mode == "idle" and self.activities.greeting.remaining <= 0 and (self.frame // 25) % 2 else 0
             wx = l + round(self.X) - self.cw // 2
-            wy = b + round(self.Y) - self.base - bob
+            wy = b + round(self.Y) - self.base
             self.present(self.img.get(name, self.img["front"]), self.base + drop, wx, wy)
             self.set_shown(True)
         else:
@@ -796,7 +854,8 @@ class Mascot:
         moving = self.mode in ("held", "fall", "land", "tip", "crash", "get_up", "edge_rise",
                                "sit_back", "wake", "walk", "walk_off", "turn", "climb_up", "climb_down")
         sitting_to_play = self.mode == "game" and self.timer > self.activities.game_length - walk.SEAT_TICKS
-        period = MOTION_FRAME_MS if moving or sitting_to_play else TICK_MS
+        animated = self.activities.bridge.remaining or self.activities.greeting.remaining or self.mode in activities.REST_MODES
+        period = MOTION_FRAME_MS if moving or sitting_to_play or animated else TICK_MS
         spent_ms = (time.monotonic() - now) * 1000
         self.root.after(max(1, round(period - spent_ms)), self.tick)
 
