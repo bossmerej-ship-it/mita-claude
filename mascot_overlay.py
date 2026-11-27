@@ -259,6 +259,7 @@ class Mascot:
             return
         self.held = True
         self.climb = None
+        self.activities.handoff.requested = True
         self.activities.held_rub = activities.RUB_TICKS if self.mode in activities.REST_MODES else 0
         self.activities.greeting.cancel()
         self.activities.bridge.play(())
@@ -286,6 +287,7 @@ class Mascot:
             return
         now = time.monotonic()
         self.held = False
+        self.activities.handoff.requested = True
         self.refresh_prompt()
         plat.refocus(self.target[0])                 # фокус остаётся у Claude/ChatGPT
         if e.state & 0x0001 or (sys.platform != "darwin" and e.state & 0x0004):
@@ -779,6 +781,7 @@ class Mascot:
         if on:
             plat.show(self.root, self.own)
         else:
+            self.activities.handoff.reset()
             plat.hide(self.root, self.own)
         self.shown = on
 
@@ -847,7 +850,8 @@ class Mascot:
             name, drop = self.pick()
             wx = l + round(self.X) - self.cw // 2
             wy = b + round(self.Y) - self.base
-            self.present(self.img.get(name, self.img["front"]), self.base + drop, wx, wy)
+            image, drop = self.activities.handoff.frame(self.img.get(name, self.img["front"]), drop, now, SCALE)
+            self.present(image, self.base + drop, wx, wy)
             self.set_shown(True)
         else:
             self.set_shown(False)

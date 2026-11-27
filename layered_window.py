@@ -2,6 +2,7 @@
 
 import ctypes as c
 from ctypes import wintypes as w
+from weakref import WeakKeyDictionary
 
 
 class BitmapInfoHeader(c.Structure):
@@ -57,7 +58,7 @@ class LayeredWindow:
         self.size = w.SIZE(width, height)
         self.origin = w.POINT(0, 0)
         self.blend = BlendFunction(0, 0, 255, 1)  # AC_SRC_OVER, AC_SRC_ALPHA
-        self.frames = {}
+        self.frames = WeakKeyDictionary()
         self.last_frame = self.last_position = None
         self.dc = gdi.CreateCompatibleDC(None)
         if not self.dc:

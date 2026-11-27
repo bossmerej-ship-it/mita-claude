@@ -6,6 +6,7 @@ import math
 import fall_motion
 import rise_motion
 import walk_motion
+from sprite_handoff import SpriteHandoff
 
 
 CELL = (61, 90)
@@ -166,6 +167,7 @@ class Activities:
         self.game_length = 0
         self.greeting = CursorGreeting()
         self.bridge = PoseClip()
+        self.handoff = SpriteHandoff()
         self.next_idle_check = 0.0
         self.rest_drop = 0
         self.rest_pinned = False

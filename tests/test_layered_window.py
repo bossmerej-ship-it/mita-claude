@@ -65,6 +65,7 @@ class LayeredWindowTests(unittest.TestCase):
         import mascot_overlay as overlay
         mascot = overlay.Mascot.__new__(overlay.Mascot)
         mascot.root, mascot.own, mascot.shown = self.root, 123, None
+        mascot.activities = overlay.activities.Activities()
         with patch.object(self.platform, "show") as show, patch.object(self.platform, "hide") as hide:
             for visible in (True, True, True, False, False, True):
                 mascot.set_shown(visible)
