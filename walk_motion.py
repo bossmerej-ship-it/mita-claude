@@ -8,8 +8,8 @@ FIRST_STEP = tuple(f"step_in{i}" for i in range(8))
 POSE_ROWS = tuple(CYCLE[i:i + 8] for i in range(0, len(CYCLE), 8)) + (FIRST_STEP,)
 
 START_TICKS = 4.0
-PLANT_FRAMES = 4
-PLANT_TICKS = 3.0
+PLANT_FRAMES = 7
+PLANT_TICKS = 5.0
 _PLANTS = tuple(f"plant_{stride}_{i}" for stride in CYCLE + FIRST_STEP for i in range(1, PLANT_FRAMES + 1))
 PLANT_ROWS = tuple(_PLANTS[i:i + 8] for i in range(0, len(_PLANTS), 8))
 PIVOT_FRAME_TICKS = .55
@@ -41,6 +41,19 @@ def plant_sprite(age, direction, pixels, scale):
     i = min(PLANT_FRAMES, max(0, int(age * (PLANT_FRAMES + 1) / PLANT_TICKS)))
     name = f"plant_{stride}_{i}" if i else stride
     return name + ("_left" if direction < 0 else "")
+
+
+def face_front(pixels, direction, scale):
+    stride = stride_name(pixels, scale)
+    suffix = "_left" if direction < 0 else ""
+    planted = (stride, *(f"plant_{stride}_{i}" for i in range(1, PLANT_FRAMES + 1)))
+    return tuple((name + suffix, 0) for name in (*planted, *reversed(rise.PIVOT)))
+
+
+def look_pose(age, remaining, direction):
+    # Turn the head into three-quarter view, hold, then face front before the next action.
+    index = min(8, max(0, int(min(age, remaining) / PIVOT_FRAME_TICKS)))
+    return rise.PIVOT[index] + ("_left" if direction < 0 else ""), 0
 
 
 def turn_sprite(timer, direction, pixels, scale):
