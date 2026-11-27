@@ -1,5 +1,6 @@
 import unittest
 from collections import deque
+from unittest.mock import patch
 
 import fall_motion as motion
 import mascot_overlay as overlay
@@ -20,6 +21,36 @@ def falling_mita(x=200, y=-450, vx=0, vy=0, prompt=None):
 
 
 class FallMotionTests(unittest.TestCase):
+    def test_fractional_contact_spends_the_same_remaining_time_on_the_floor(self):
+        for intervals in ((2,), (.25,) * 8, (.4, 1.3, .3)):
+            m = falling_mita(y=-.9, vy=1)
+            for dt in intervals:
+                m.step(dt)
+            crossing = motion.crossing_time(.9, 1, overlay.GRAVITY, overlay.MAX_FALL)
+            self.assertEqual((m.mode, m.on, m.pick()), ("land", "floor", ("cushion3", 0)))
+            self.assertAlmostEqual(m.timer, len(motion.CUSHION) - (2 - crossing))
+
+    def test_irregular_frames_agree_through_impact_recovery_and_the_first_step(self):
+        with patch.object(overlay.random, "random", return_value=.5), \
+                patch.object(overlay.random, "randint", side_effect=lambda low, high: high):
+            for ledge in (False, True):
+                for speed in (1, 13.5):
+                    edge = -200 if ledge else 0
+                    prompt = (100, 700, 800, 850) if ledge else None
+                    a, b = [falling_mita(x=400, y=edge-.9, vy=speed, prompt=prompt) for _ in range(2)]
+                    for _ in range(165):
+                        for dt in (1.8, .2):
+                            a.step(dt)
+                        for _ in range(8):
+                            b.step(.25)
+                        self.assertEqual((a.mode, a.on, a.pick()), (b.mode, b.on, b.pick()))
+                        self.assertAlmostEqual(a.timer, b.timer)
+                        self.assertAlmostEqual(a.X, b.X)
+                        self.assertAlmostEqual(a.Y, b.Y)
+                        if a.mode == "walk" and a.walk_pixels:
+                            break
+                    self.assertEqual(a.mode, "walk")
+
     def test_same_gesture_gives_same_throw_at_different_mouse_rates(self):
         for rate in (30, 100, 500):
             with self.subTest(rate=rate):

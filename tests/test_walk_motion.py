@@ -202,7 +202,8 @@ class WalkMotionTests(unittest.TestCase):
             suffix = "_left" if direction < 0 else ""
             self.assertEqual(list(dict.fromkeys(name for name, _ in poses)),
                              [name + suffix for name in rise.EDGE[swing]])
-            self.assertEqual((m.mode, m.X), ("walk", 500.25))
+            self.assertEqual((m.mode, round(m.X)), ("walk", round(500.25)))
+            self.assertAlmostEqual(m.X, 500.25 + direction * walk.travel(0, .25, overlay.SPEED))
 
     def test_narrowing_ledge_reverses_the_rise_and_removing_it_releases_mita(self):
         m = walking_mita()

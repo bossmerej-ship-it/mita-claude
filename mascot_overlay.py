@@ -331,24 +331,30 @@ class Mascot:
     def step_fall(self, plats, dt):
         # Одна траектория определяет и подготовку к касанию, и сам момент удара.
         # Проверяем X именно в момент пересечения верхней границы поля ввода.
-        contact, when = None, 6.0
+        anticipation = 6.0
+        contact, when = None, dt + anticipation
         for name, (surface_y, x1, x2) in plats.items():
             crossing = motion.crossing_time(surface_y - self.Y, self.vy, GRAVITY, MAX_FALL)
             if crossing <= when and x1 <= self.horizontal_flight(crossing)[0] <= x2:
                 contact, when = name, crossing
 
         goal = 1 + min(1, max(0, (abs(self.vx) - 4) / 8))
+        travel = min(dt, when)
         if contact is not None:
+            lead = min(travel, max(0.0, when - anticipation))
+            self.air_pose = motion.approach_pose(self.air_pose, goal, lead)
             impact = min(MAX_FALL, self.vy + GRAVITY * when)
             goal = 2.0 if impact > HARD_LANDING else 0.0
-        travel = min(dt, when) if contact is not None else dt
-        self.air_pose = motion.approach_pose(self.air_pose, goal, travel)
+        else:
+            lead = 0
+        self.air_pose = motion.approach_pose(self.air_pose, goal, travel - lead)
         self.air_ticks += travel
         self.X, self.vx = self.horizontal_flight(travel)
         distance, self.vy = motion.fall_travel(self.vy, travel, GRAVITY, MAX_FALL)
         self.Y += distance
         if contact is not None and when <= dt:
             self.land(contact, self.vy)
+            return dt - travel
         elif self.Y > plats["floor"][0] + 400:
             self.land("floor", 0)
 
@@ -360,7 +366,7 @@ class Mascot:
             self.mode = "tip" if self.air_pose < 1.95 else "crash"
             self.timer = motion.IMPACT_TICKS
         else:
-            self.mode, self.timer = "land", 7        # присела от приземления
+            self.mode, self.timer = "land", len(motion.CUSHION)
 
     def next_action(self):
         if self.on == "ledge" and self.activities.game_wait <= 0:
@@ -474,9 +480,22 @@ class Mascot:
         self.edge_cooldown = 90
 
     def step(self, dt=1.0):
-        plats = self.platforms()
         if self.edge_cooldown > 0:
             self.edge_cooldown = max(0, self.edge_cooldown - dt)
+        # A frame may span contact, the end of a pose, and the start of the next movement.
+        while True:
+            span = dt
+            if self.mode in ("land", "crash", "get_up", "sit_back", "perch", "edge_rise",
+                             "game", "turn", "walk", "look", "idle", "yawn", "doze", "wake"):
+                if 0 < self.timer < span:
+                    span = self.timer
+            unused = self._step(span)
+            dt = dt - span + (unused or 0)
+            if dt <= 1e-9:
+                return
+
+    def _step(self, dt):
+        plats = self.platforms()
 
         if self.mode == "held":
             self.activities.held_rub = max(0, self.activities.held_rub - dt)
@@ -504,8 +523,7 @@ class Mascot:
             return
 
         if self.mode == "fall":
-            self.step_fall(plats, dt)
-            return
+            return self.step_fall(plats, dt)
 
         if self.mode in ("climb_up", "climb_down"):
             top, left, right = plats["ledge"]
@@ -531,8 +549,7 @@ class Mascot:
         if self.on == "ledge" and (not x1 <= self.X <= x2 or py - self.Y > 3 * SCALE):
             # The composer moved out from under her or shrank down after an attachment was removed.
             self.start_fall()
-            self.step_fall(plats, dt)
-            return
+            return self.step_fall(plats, dt)
         self.Y = py
 
         if self.mode == "walk_off":
@@ -574,9 +591,12 @@ class Mascot:
             return
 
         if self.mode == "tip":
-            self.air_pose = min(2.0, self.air_pose + .5 * dt)
-            if self.air_pose == 2.0:
+            to_impact = (2.0 - self.air_pose) / .5
+            if dt >= to_impact:
+                self.air_pose = 2.0
                 self.mode = "crash"
+                return dt - to_impact
+            self.air_pose += .5 * dt
             return
 
         self.timer -= dt
